@@ -10,6 +10,27 @@ import { z } from "zod";
  *   - The single straight stair sits on the outer edge (y = depthIn), opposite the house.
  *   - `stairOffsetIn` is measured from the LEFT outer corner to the left side of the stair opening.
  */
+/** Framing choices that drive the auto-generated framing details. Defaults suit a typical attached deck. */
+export const framingOptionsSchema = z.object({
+  joistSpacingIn: z.union([z.literal(12), z.literal(16), z.literal(24)]).default(16),
+  joistSize: z.enum(["auto", "2x6", "2x8", "2x10", "2x12"]).default("auto"),
+  beamType: z.enum(["dropped", "flush"]).default("dropped"),
+  /** Joist overhang past the dropped beam centreline (ignored for flush beams). */
+  joistOverhangIn: z.number().int().nonnegative().default(12),
+  /** Beam overhang past the end post centrelines. */
+  beamOverhangIn: z.number().int().nonnegative().default(12),
+  /** null = fewest posts that satisfy the tables. */
+  postCount: z.number().int().min(2).max(12).nullable().default(null),
+  bandBoard: z.enum(["2x-lumber", "ewp", "solid-masonry", "hollow-masonry"]).default("2x-lumber"),
+  ledgerFastener: z
+    .enum(["lag-screw", "through-bolt", "fastenmaster-ledgerlok", "mitek-ws-ext", "simpson-sdws", "spax-powerlag", "expansion-anchor", "adhesive-anchor"])
+    .default("lag-screw"),
+  hiddenDeckingFasteners: z.boolean().default(false),
+  lateralPreference: z.enum(["tension-ties", "knee-bracing"]).default("tension-ties"),
+});
+export type FramingOptions = z.infer<typeof framingOptionsSchema>;
+export const DEFAULT_FRAMING_OPTIONS: FramingOptions = framingOptionsSchema.parse({});
+
 export const deckDesignModelSchema = z.object({
   schemaVersion: z.literal(1),
   widthIn: z.number().int().positive(),
@@ -22,6 +43,8 @@ export const deckDesignModelSchema = z.object({
   /** Boards run parallel to the house (along x). Other directions are future work. */
   boardDirection: z.literal("parallel_to_house"),
   deckingProductId: z.string().uuid().nullable(),
+  /** Optional so designs saved before framing existed still parse; defaults are applied. */
+  framing: framingOptionsSchema.default(DEFAULT_FRAMING_OPTIONS),
 });
 
 export type DeckDesignModel = z.infer<typeof deckDesignModelSchema>;
@@ -77,8 +100,11 @@ function formatIn(totalInches: number) {
   return inch === 0 ? `${ft} ft` : ft === 0 ? `${inch} in` : `${ft} ft ${inch} in`;
 }
 
-/** Schematic stair sizing only. Real riser/tread/stringer design is a later milestone. */
-export const STAIR_SCHEMATIC = { maxRiserIn: 7.75, treadRunIn: 11 } as const;
+/**
+ * Stair geometry used by the plan, 3D and framing outputs: maximum 8¼" riser and a 10" run
+ * (≥ 9" tread) per Fairfax County Typical Deck Details, Figure 39. Stringer checks live in the framing module.
+ */
+export const STAIR_SCHEMATIC = { maxRiserIn: 8.25, treadRunIn: 10 } as const;
 
 export interface DeckAnalysis {
   valid: boolean;
@@ -151,4 +177,5 @@ export const DEFAULT_DECK_DESIGN: DeckDesignModel = {
   stair: { widthIn: 6 * 12, offsetIn: 4 * 12 },
   boardDirection: "parallel_to_house",
   deckingProductId: null,
+  framing: DEFAULT_FRAMING_OPTIONS,
 };

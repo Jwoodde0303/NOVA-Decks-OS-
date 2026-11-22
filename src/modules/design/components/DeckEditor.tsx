@@ -3,8 +3,11 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { createRevisionAction, saveDesignAction } from "@/app/c/[slug]/actions";
-import { formatFeetInches, splitFeetInches, toInches } from "@/modules/core/units";
-import { analyzeDeck, type DeckDesignModel } from "@/modules/design/model";
+import { formatFeetInches } from "@/modules/core/units";
+import { analyzeDeck, type DeckDesignModel, type FramingOptions } from "@/modules/design/model";
+import { generateFraming } from "@/modules/framing/generate";
+import { FramingPanel } from "@/modules/framing/components/FramingPanel";
+import { FeetInches } from "./FeetInches";
 import { DRAFT_SCOPE_LABEL, type PricedProduct } from "@/modules/estimating/takeoff";
 import { PlanView } from "./PlanView";
 
@@ -34,12 +37,17 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
 
   const product = useMemo(() => products.find((p) => p.id === model.deckingProductId) ?? null, [products, model.deckingProductId]);
   const analysis = useMemo(() => analyzeDeck(model, product), [model, product]);
+  const framing = useMemo(() => generateFraming(model), [model]);
   const totalCents = analysis.decking && product ? analysis.decking.totalPieces * product.unitPriceCents : null;
 
   function patch(p: Partial<DeckDesignModel>) {
     setModel((m) => ({ ...m, ...p }));
     setDirty(true);
     setMessage(null);
+  }
+
+  function patchFraming(p: Partial<FramingOptions>) {
+    patch({ framing: { ...model.framing, ...p } });
   }
 
   function save() {
@@ -194,7 +202,7 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
               <span className="text-[12px] text-ink-3">Drag to rotate · scroll to zoom</span>
             </div>
             <div className="h-[360px] bg-[#e9eef2]">
-              <Deck3D model={model} analysis={analysis} />
+              <Deck3D model={model} analysis={analysis} framing={framing} />
             </div>
           </section>
         </div>
@@ -233,6 +241,10 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
           </div>
         </section>
       </div>
+
+      <div className="xl:col-span-2">
+        <FramingPanel model={model} framing={framing} onChange={patchFraming} />
+      </div>
     </div>
   );
 }
@@ -246,22 +258,3 @@ function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
   );
 }
 
-function FeetInches({ label, value, onChange, error }: { label: string; value: number; onChange: (inches: number) => void; error?: boolean }) {
-  const { feet, inches } = splitFeetInches(value);
-  const cls = `field num ${error ? "border-brick ring-2 ring-brick/15" : ""}`;
-  return (
-    <div>
-      <label className="lbl">{label}</label>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="relative">
-          <input type="number" min={0} step={1} className={cls} value={feet} onChange={(e) => onChange(toInches(Math.max(0, Number(e.target.value) || 0), inches))} aria-label={`${label} feet`} />
-          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-ink-3">ft</span>
-        </div>
-        <div className="relative">
-          <input type="number" min={0} max={11} step={1} className={cls} value={inches} onChange={(e) => onChange(toInches(feet, Math.min(11, Math.max(0, Number(e.target.value) || 0))))} aria-label={`${label} inches`} />
-          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-ink-3">in</span>
-        </div>
-      </div>
-    </div>
-  );
-}

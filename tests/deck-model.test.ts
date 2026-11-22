@@ -71,9 +71,10 @@ describe("deck fixture: 20 ft × 12 ft, boards parallel to house, 6 in effective
 
   it("stair schematic derives risers from height", () => {
     const a = analyzeDeck(fixture, null);
-    expect(a.stairSchematic.risers).toBe(7); // 48 / 7.75 → 6.19 → 7
-    expect(a.stairSchematic.treads).toBe(6);
-    expect(a.stairSchematic.totalRunIn).toBe(66);
+    expect(a.stairSchematic.risers).toBe(6); // 48 / 8.25 (Fairfax max riser) → 5.8 → 6
+    expect(a.stairSchematic.riserHeightIn).toBe(8);
+    expect(a.stairSchematic.treads).toBe(5);
+    expect(a.stairSchematic.totalRunIn).toBe(50);
   });
 
   it("CSV export contains the scope label, quantities and totals, with quoting", () => {

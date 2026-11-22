@@ -5,7 +5,8 @@ JobTread and QuickBooks remain the operating systems while this first version is
 ## Next
 - **Invitations & onboarding**: owner invites a user by email; user sets a password; membership created on acceptance.
 - **Lost-stage flow**: require a lost reason when moving to Lost; report on lost reasons.
-- **Design**: multiple decks per opportunity on one plan, board direction options, picture-frame borders, railing takeoff, stair stringer/riser outputs, fascia and fasteners as separate takeoff lines.
+- **Design**: multiple decks per opportunity on one plan, board direction options, picture-frame borders, railing takeoff, fascia and fasteners as separate takeoff lines.
+- **Framing**: multi-span and free-standing layouts, framing at chimneys/bay windows (Figure 10), beam splices, intermediate stair landings, knee-brace drawing, permit drawing (PDF) export with the county worksheet, other jurisdictions' typical details (Loudoun, Prince William, Alexandria), framing lumber pricing in estimates.
 - **Estimating**: waste factors per product, labor lines, markup/margin, customer-facing proposal PDF, non-draft statuses (Sent / Accepted).
 
 ## Later
