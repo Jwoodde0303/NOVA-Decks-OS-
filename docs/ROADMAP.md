@@ -1,19 +1,14 @@
 # Roadmap and future work
 
-JobTread and QuickBooks remain the operating systems while this first version is validated. Items below are tracked, not started.
+The product is deck CAD + estimating that plugs into the contractor's CRM. Items below are tracked, not started.
 
 ## Next
-- **Invitations & onboarding**: owner invites a user by email; user sets a password; membership created on acceptance.
-- **Lost-stage flow**: require a lost reason when moving to Lost; report on lost reasons.
-- **Design**: multiple decks per opportunity on one plan, board direction options, picture-frame borders, railing takeoff, fascia and fasteners as separate takeoff lines.
-- **Framing**: multi-span and free-standing layouts, framing at chimneys/bay windows (Figure 10), beam splices, intermediate stair landings, knee-brace drawing, permit drawing (PDF) export with the county worksheet, other jurisdictions' typical details (Loudoun, Prince William, Alexandria), framing lumber pricing in estimates.
-- **Estimating**: waste factors per product, labor lines, markup/margin, customer-facing proposal PDF, non-draft statuses (Sent / Accepted).
+- **Permit-ready plansets (PDF)**: cover/project data, dimensioned framing plan, deck plan, front/side elevations, section through ledger–joist–beam–post–footing, stair section, Fairfax "Complete My Deck" worksheet and sketch sheet pre-filled, notes/specifications, materials and fastener schedules, plat placeholder page; stored as a project document and pushable to the CRM.
+- **Live CRM adapters**: JobTread (jobs search/link, estimate document push) and AccuLynx, behind API keys supplied by the company; recorded-fixture tests.
+- **Estimating**: manual line items and overrides, per-section markup, fascia/picture-frame/railing products in the catalog, proposal PDF, estimate statuses synced to the CRM.
+- **Catalog**: verification workflow (mark rows verified with reviewer + date), distributor item numbers for Deckorators, Altitude and porch collections, swatch-sampled colours, supplier price-file import.
 
 ## Later
-- **Scheduling**: crew calendar, job phases, weather holds.
-- **Change orders**: scoped to a job, linked to a new estimate revision, approval trail.
-- **Live supplier feeds**: import supplier price files into `company_product_prices` with source + effective date; manufacturer catalog sync into `catalog_products`.
-- **Customer portal**: read-only proposal/approval and photo updates.
-- **Accounting**: QuickBooks customer/invoice sync; JobTread import/export until fully replaced.
-- **Structural & permits**: joist/beam/post sizing tables, footing layout, permit drawing exports.
-- **Platform**: Postgres row-level security, audit log export, per-company feature flags, billing.
+- **Framing**: multi-span and free-standing layouts, framing at chimneys/bay windows, beam splices, intermediate stair landings, knee-brace drawing, other jurisdictions' typical details (Loudoun, Prince William, Alexandria, DCA 6), engineered-design hand-off.
+- **Design**: multiple decks per project on one plan, diagonal decking, picture-frame borders, railing layout, lighting.
+- **Platform**: invitations/onboarding, Postgres row-level security, audit export, per-company feature flags, billing.

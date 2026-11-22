@@ -1,4 +1,5 @@
 import type { DeckDesignModel, FramingOptions } from "@/modules/design/model";
+import type { InstallationRules } from "@/db/catalog/types";
 import { STAIR_SCHEMATIC, validateDeckDesign } from "@/modules/design/model";
 import {
   ACTUAL_DEPTH_IN,
@@ -39,8 +40,26 @@ export interface FramingIssue {
   ref?: string;
 }
 
+export interface ManufacturerRulesApplied {
+  manufacturer: string;
+  productLine: string | null;
+  product: string | null;
+  rules: InstallationRules;
+  /** Human-readable list of what the manufacturer rules changed or confirmed. */
+  applied: string[];
+}
+
+export interface ProductForFraming {
+  manufacturer: string;
+  productLine?: string | null;
+  name?: string | null;
+  profile?: string | null;
+  installation: InstallationRules | null;
+}
+
 export interface FramingResult {
   ruleset: typeof RULESET;
+  manufacturerRules: ManufacturerRulesApplied | null;
   /** True when no `error` issues: the layout fits the county's prescriptive tables. */
   ok: boolean;
   issues: FramingIssue[];
@@ -136,6 +155,8 @@ export interface FramingResult {
     maxStringerSpanIn: number;
     stringerCount: number;
     stringerSpacingIn: number;
+    /** Governing maximum stringer spacing (county 18" or the manufacturer limit, whichever is less). */
+    stringerMaxSpacingIn: number;
     guardRequired: boolean;
     handrailRequired: boolean;
     footing: string;
@@ -171,7 +192,7 @@ function beamDepthIn(b: BeamOption) {
 
 /* ------------------------------- Generator -------------------------------- */
 
-export function generateFraming(model: DeckDesignModel): FramingResult {
+export function generateFraming(model: DeckDesignModel, product?: ProductForFraming | null): FramingResult {
   const issues: FramingIssue[] = [];
   const assumptions: string[] = [
     "Single-level deck attached to the house with a ledger; joists bear on the ledger and one outside beam (Figures 5/6).",
@@ -185,6 +206,20 @@ export function generateFraming(model: DeckDesignModel): FramingResult {
   const H = model.heightIn;
 
   for (const v of validateDeckDesign(model)) issues.push({ severity: "error", code: "design", message: v.message });
+
+  /* ---- Manufacturer installation rules for the selected decking ---- */
+  const mfr = product?.installation ?? null;
+  const applied: string[] = [];
+  if (mfr) {
+    if (o.joistSpacingIn > mfr.maxJoistSpacingPerpendicularIn) {
+      issues.push({ severity: "error", code: "manufacturer-joist-spacing", message: `${product!.manufacturer} ${product!.productLine ?? ""} allows joists at ${mfr.maxJoistSpacingPerpendicularIn}" o.c. maximum (perpendicular decking); this design uses ${o.joistSpacingIn}".`, ref: mfr.source.title });
+    } else {
+      applied.push(`Joist spacing ${o.joistSpacingIn}" o.c. is within the manufacturer maximum of ${mfr.maxJoistSpacingPerpendicularIn}" (${mfr.maxJoistSpacingDiagonalIn}" for diagonal layouts).`);
+    }
+    if (mfr.blockingRowsMaxIn) applied.push(`Solid blocking rows between joists at ${fmtFtIn(mfr.blockingRowsMaxIn)} o.c. maximum.`);
+    if (mfr.maxBoardOverhangIn !== null) applied.push(`Decking overhang past the rim/fascia ${mfr.maxBoardOverhangIn}" maximum.`);
+    if (mfr.hiddenFastenerSystems.length) applied.push(`Approved hidden fasteners: ${mfr.hiddenFastenerSystems.join("; ")}.`);
+  }
 
   const guardRequired = H > GUARD_RULES.requiredAboveGradeIn;
 
@@ -358,8 +393,13 @@ export function generateFraming(model: DeckDesignModel): FramingResult {
   if (H > STAIR_RULES.landingRequiredAboveRiseIn) issues.push({ severity: "error", code: "stair-landing", message: `Total stair rise ${fmtFtIn(H)} exceeds 12 ft; an intermediate landing built as a free-standing deck is required (not generated here).`, ref: "Stair Landing, p. 23" });
   else if (horizontalSpanIn > maxStringerSpanIn)
     issues.push({ severity: "error", code: "stringer-span", message: `Stair run ${fmtFtIn(horizontalSpanIn)} exceeds the ${fmtFtIn(maxStringerSpanIn)} maximum ${stringerType} stringer span. Add an intermediate landing${model.stair.widthIn !== 36 ? ", or use a 36\"-wide stair with solid stringers (13'-3\" max)" : ""}.`, ref: "Figure 41" });
-  const stringerCount = Math.ceil(model.stair.widthIn / STAIR_RULES.maxStringerSpacingIn) + 1;
+  const stringerMaxSpacingIn = Math.min(STAIR_RULES.maxStringerSpacingIn, mfr?.maxStairStringerSpacingIn ?? Infinity);
+  let stringerCount = Math.ceil(model.stair.widthIn / stringerMaxSpacingIn) + 1;
+  const minStringers = mfr ? (model.stair.widthIn <= 36 ? mfr.minStringersAt36In : (mfr.minStringersOver36In ?? mfr.minStringersAt36In)) : undefined;
+  if (minStringers) stringerCount = Math.max(stringerCount, minStringers);
   const stringerSpacingIn = model.stair.widthIn / (stringerCount - 1);
+  if (mfr) applied.push(`Stair stringers ${stringerCount} × 2x12 at ${stringerSpacingIn.toFixed(1)}" o.c. (manufacturer maximum ${mfr.maxStairStringerSpacingIn}"${minStringers ? `, minimum ${minStringers} stringers` : ""}; county maximum 18").`);
+  if (mfr && mfr.maxTreadOverhangIn !== null) applied.push(`Tread overhang past stringers/riser ${mfr.maxTreadOverhangIn}" maximum.`);
   const stairGuardRequired = H > STAIR_RULES.guardRequiredAboveRiseIn;
   const handrailRequired = risers >= STAIR_RULES.handrailMinRisers;
 
@@ -400,12 +440,13 @@ export function generateFraming(model: DeckDesignModel): FramingResult {
     ...(methods.includes("method-1-tension-ties") ? [{ item: "Tension ties (750 lb min)", qty: TENSION_TIES.count, unit: "ea" }] : []),
     ...(methods.includes("method-2-knee-bracing-at-beam") ? [{ item: "2x6 knee braces at beam", qty: postCount * 2, unit: `pcs × ${fmtFtIn(KNEE_BRACING.braceLengthIn)}` }] : []),
     ...(guardRequired ? [{ item: "4x4 guard posts with 1,800 lb hold-downs", qty: guardPosts.length, unit: "ea" }] : []),
-    { item: "2x12 stair stringers", qty: stringerCount, unit: "ea", note: `${stringerType}, ≤ 18" o.c.` },
+    { item: "2x12 stair stringers", qty: stringerCount, unit: "ea", note: `${stringerType}, ≤ ${stringerMaxSpacingIn}" o.c.` },
     { item: 'Stair footings 8" sq / 10" rd × 12" deep', qty: stringerCount, unit: "ea" },
   ];
 
   return {
     ruleset: RULESET,
+    manufacturerRules: mfr ? { manufacturer: product!.manufacturer, productLine: product!.productLine ?? null, product: product!.name ?? null, rules: mfr, applied } : null,
     ok,
     issues,
     assumptions,
@@ -488,6 +529,7 @@ export function generateFraming(model: DeckDesignModel): FramingResult {
       maxStringerSpanIn,
       stringerCount,
       stringerSpacingIn,
+      stringerMaxSpacingIn,
       guardRequired: stairGuardRequired,
       handrailRequired,
       footing: STAIR_RULES.footing,

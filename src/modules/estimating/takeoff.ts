@@ -1,12 +1,21 @@
 import { analyzeDeck, type DeckAnalysis, type DeckDesignModel, type DeckingProductSpec } from "@/modules/design/model";
 import { ValidationError } from "@/modules/core/errors";
+import type { InstallationRules } from "@/db/catalog/types";
 
 export const DRAFT_SCOPE_LABEL = "Draft · Decking materials only";
 
+/** A catalog decking product with (optionally) the company's current price. */
 export interface PricedProduct extends DeckingProductSpec {
-  unitPriceCents: number;
-  priceSource: string;
-  priceEffectiveOn: string;
+  productLine: string;
+  color: string | null;
+  colorHex: string | null;
+  profile: "square-edge" | "grooved" | "tongue-and-groove";
+  widthActualIn: number | null;
+  thicknessIn: number | null;
+  installation: InstallationRules | null;
+  unitPriceCents: number | null;
+  priceSource: string | null;
+  priceEffectiveOn: string | null;
   supplierName: string | null;
 }
 
@@ -28,7 +37,7 @@ export interface Takeoff {
   subtotalCents: number;
 }
 
-/** Pure: design + priced product → line items. Throws ValidationError for an invalid design. */
+/** Pure: design + priced product → decking-only line items. Throws ValidationError for an invalid design or unpriced product. */
 export function computeTakeoff(model: DeckDesignModel, product: PricedProduct): Takeoff {
   const analysis = analyzeDeck(model, product);
   if (!analysis.valid) {
@@ -37,6 +46,7 @@ export function computeTakeoff(model: DeckDesignModel, product: PricedProduct): 
       analysis.issues.map((i) => i.message),
     );
   }
+  if (product.unitPriceCents === null) throw new ValidationError(`No company price is set for ${product.manufacturer} ${product.name}.`);
   const d = analysis.decking!;
   const quantity = d.totalPieces;
   const totalCents = quantity * product.unitPriceCents;
@@ -55,7 +65,7 @@ export function computeTakeoff(model: DeckDesignModel, product: PricedProduct): 
   return { scopeLabel: DRAFT_SCOPE_LABEL, analysis, lineItems, subtotalCents: totalCents };
 }
 
-function csvCell(v: string | number): string {
+export function csvCell(v: string | number): string {
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 }

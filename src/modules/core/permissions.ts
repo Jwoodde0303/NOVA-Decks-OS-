@@ -6,14 +6,15 @@ import { ForbiddenError } from "./errors";
  * that services call through `ctx.require(...)`.
  */
 export const PERMISSIONS = {
-  "crm.read": ["owner_admin", "member"],
-  "crm.write": ["owner_admin", "member"],
-  "crm.delete": ["owner_admin"],
-  "crm.export": ["owner_admin", "member"],
-  "crm.convert_job": ["owner_admin"],
+  "projects.read": ["owner_admin", "member"],
+  "projects.write": ["owner_admin", "member"],
+  "projects.delete": ["owner_admin"],
   "design.write": ["owner_admin", "member"],
   "estimate.write": ["owner_admin", "member"],
+  "estimate.export": ["owner_admin", "member"],
+  "estimate.status": ["owner_admin"],
   "pricing.manage": ["owner_admin"],
+  "integrations.manage": ["owner_admin"],
   "company.manage_members": ["owner_admin"],
   "company.manage_settings": ["owner_admin"],
 } as const satisfies Record<string, readonly Role[]>;

@@ -27,11 +27,11 @@ export default async function CompanyLayout({ children, params }: { children: Re
         </div>
         <nav className="flex-1 space-y-0.5 p-2">
           <NavLink href={base} exact>
-            Dashboard
+            Projects
           </NavLink>
-          <NavLink href={`${base}/opportunities`}>Pipeline</NavLink>
-          <NavLink href={`${base}/customers`}>Customers</NavLink>
-          <NavLink href={`${base}/jobs`}>Jobs</NavLink>
+          <NavLink href={`${base}/catalog`}>Catalog</NavLink>
+          <NavLink href={`${base}/pricing`}>Pricing</NavLink>
+          <NavLink href={`${base}/integrations`}>Integrations</NavLink>
         </nav>
         <div className="border-t border-line px-4 py-3">
           <div className="truncate text-[13px] font-medium">{user.name}</div>
@@ -42,7 +42,7 @@ export default async function CompanyLayout({ children, params }: { children: Re
         </div>
       </aside>
       <main className="min-w-0 flex-1 px-8 py-7">
-        <div className="mx-auto max-w-[1180px]">{children}</div>
+        <div className="mx-auto max-w-[1280px]">{children}</div>
       </main>
     </div>
   );

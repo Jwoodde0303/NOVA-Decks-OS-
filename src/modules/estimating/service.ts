@@ -1,30 +1,30 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { activities, estimateRevisions, estimates, opportunities } from "@/db/schema";
+import { z } from "zod";
+import { companies, estimateRevisions, estimates, ESTIMATE_STATUSES } from "@/db/schema";
 import type { CompanyContext } from "@/modules/core/context";
 import { NotFoundError } from "@/modules/core/errors";
 import { getDesign } from "@/modules/design/service";
 import { deckDesignModelSchema } from "@/modules/design/model";
-import { getPricedProduct } from "./pricing";
-import { computeTakeoff, takeoffToCsv, type EstimateLineItem, type PricedProduct } from "./takeoff";
+import { generateFraming, type FramingResult } from "@/modules/framing/generate";
+import { logProjectEvent } from "@/modules/projects/service";
+import { buildEstimate, estimateToCsv, type EstimateBuild, type EstimateSection } from "./engine";
+import { getPriceBook, getPricedProduct } from "./pricing";
+import type { PricedProduct } from "./takeoff";
 
 /**
- * Create a new draft estimate revision for a saved design.
- * Snapshots the design model, product and price so later edits never change this revision.
+ * Create a new estimate revision for a saved design: runs the framing generator and the estimating
+ * engine with the company's current prices and settings, then snapshots everything.
  */
-export async function createDraftRevision(
-  ctx: CompanyContext,
-  input: { designId: string; catalogProductId: string; estimateId?: string | null; title?: string },
-) {
+export async function createRevision(ctx: CompanyContext, input: { designId: string; catalogProductId?: string | null; estimateId?: string | null; title?: string }) {
   ctx.require("estimate.write");
   const design = await getDesign(ctx, input.designId);
-  const product = await getPricedProduct(ctx, input.catalogProductId);
-  const takeoff = computeTakeoff(design.model, product); // throws ValidationError when the design is invalid
-
-  const [opp] = await ctx.db
-    .select({ customerId: opportunities.customerId })
-    .from(opportunities)
-    .where(and(eq(opportunities.companyId, ctx.companyId), eq(opportunities.id, design.opportunityId)));
-  if (!opp) throw new NotFoundError("Opportunity");
+  const productId = input.catalogProductId ?? design.model.deckingProductId;
+  if (!productId) throw new NotFoundError("Decking product (choose one in the design)");
+  const product = await getPricedProduct(ctx, productId);
+  const framing = generateFraming(design.model, product);
+  const [co] = await ctx.db.select({ settings: companies.settings }).from(companies).where(eq(companies.id, ctx.companyId));
+  const priceBook = await getPriceBook(ctx);
+  const build = buildEstimate({ model: design.model, product, framing, priceBook, settings: co!.settings });
 
   return ctx.db.transaction(async (tx) => {
     let estimateId = input.estimateId ?? null;
@@ -32,19 +32,12 @@ export async function createDraftRevision(
       const [e] = await tx
         .select({ id: estimates.id })
         .from(estimates)
-        .where(and(eq(estimates.companyId, ctx.companyId), eq(estimates.id, estimateId), eq(estimates.opportunityId, design.opportunityId)));
+        .where(and(eq(estimates.companyId, ctx.companyId), eq(estimates.id, estimateId), eq(estimates.projectId, design.projectId)));
       if (!e) throw new NotFoundError("Estimate");
     } else {
       const [e] = await tx
         .insert(estimates)
-        .values({
-          companyId: ctx.companyId,
-          opportunityId: design.opportunityId,
-          jobId: design.jobId,
-          designId: design.id,
-          title: input.title?.trim() || `${design.name} — decking`,
-          createdBy: ctx.userId,
-        })
+        .values({ companyId: ctx.companyId, projectId: design.projectId, designId: design.id, title: input.title?.trim() || `${design.name} — deck estimate`, createdBy: ctx.userId })
         .returning({ id: estimates.id });
       estimateId = e!.id;
     }
@@ -53,38 +46,49 @@ export async function createDraftRevision(
       .from(estimateRevisions)
       .where(eq(estimateRevisions.estimateId, estimateId));
     const next = nextRow!.next;
-
     const [rev] = await tx
       .insert(estimateRevisions)
       .values({
         companyId: ctx.companyId,
         estimateId,
         revisionNumber: next,
-        scopeLabel: takeoff.scopeLabel,
+        scopeLabel: build.scopeLabel,
         designVersion: design.version,
         designSnapshot: design.model,
+        framingSnapshot: framing,
         productSnapshot: product,
-        lineItems: takeoff.lineItems,
-        subtotalCents: takeoff.subtotalCents,
+        settings: build.settings,
+        sections: build.sections,
+        warnings: build.warnings,
+        materialsCents: build.materialsCents,
+        laborCents: build.laborCents,
+        markupCents: build.markupCents,
+        taxCents: build.taxCents,
+        totalCents: build.totalCents,
         createdBy: ctx.userId,
       })
       .returning();
-    await tx.insert(activities).values({
-      companyId: ctx.companyId,
-      customerId: opp.customerId,
-      opportunityId: design.opportunityId,
-      jobId: design.jobId,
-      actorUserId: ctx.userId,
-      kind: "estimate_revision",
-      body: `Saved draft estimate revision ${next} — ${(takeoff.subtotalCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" })}`,
-      metadata: { estimateId, revisionId: rev!.id },
-    });
-    return { ...rev!, estimateId, lineItems: takeoff.lineItems };
+    await tx.update(estimates).set({ updatedAt: new Date() }).where(eq(estimates.id, estimateId));
+    await logProjectEvent(tx, ctx, design.projectId, "estimate_revision", `Estimate revision ${next} saved — ${(build.totalCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" })}${build.warnings.length ? ` (${build.warnings.length} pricing warning${build.warnings.length === 1 ? "" : "s"})` : ""}`, { estimateId, revisionId: rev!.id });
+    return { ...parseRevision(rev!), estimateId };
   });
 }
 
+export async function setEstimateStatus(ctx: CompanyContext, estimateId: string, status: (typeof ESTIMATE_STATUSES)[number]) {
+  ctx.require("estimate.status");
+  z.enum(ESTIMATE_STATUSES).parse(status);
+  const [e] = await ctx.db
+    .update(estimates)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(estimates.companyId, ctx.companyId), eq(estimates.id, estimateId)))
+    .returning();
+  if (!e) throw new NotFoundError("Estimate");
+  await logProjectEvent(ctx.db, ctx, e.projectId, "estimate_status", `Estimate "${e.title}" marked ${status}`);
+  return e;
+}
+
 export async function getEstimate(ctx: CompanyContext, estimateId: string) {
-  ctx.require("crm.read");
+  ctx.require("projects.read");
   const [e] = await ctx.db
     .select()
     .from(estimates)
@@ -99,25 +103,17 @@ export async function getEstimate(ctx: CompanyContext, estimateId: string) {
   return { ...e, revisions: revisions.map(parseRevision) };
 }
 
-export async function listEstimatesForOpportunity(ctx: CompanyContext, opportunityId: string) {
-  ctx.require("crm.read");
-  const rows = await ctx.db
-    .select({ estimate: estimates, revision: estimateRevisions })
+export async function listEstimatesForProject(ctx: CompanyContext, projectId: string) {
+  ctx.require("projects.read");
+  return ctx.db
+    .select({ estimate: estimates, revisions: sql<number>`(select count(*) from ${estimateRevisions} r where r.estimate_id = "estimates"."id")`.mapWith(Number) })
     .from(estimates)
-    .leftJoin(estimateRevisions, eq(estimateRevisions.estimateId, estimates.id))
-    .where(and(eq(estimates.companyId, ctx.companyId), eq(estimates.opportunityId, opportunityId)))
-    .orderBy(asc(estimates.createdAt), asc(estimateRevisions.revisionNumber));
-  const byId = new Map<string, { estimate: typeof estimates.$inferSelect; revisions: ReturnType<typeof parseRevision>[] }>();
-  for (const r of rows) {
-    const entry = byId.get(r.estimate.id) ?? { estimate: r.estimate, revisions: [] };
-    if (r.revision) entry.revisions.push(parseRevision(r.revision));
-    byId.set(r.estimate.id, entry);
-  }
-  return [...byId.values()];
+    .where(and(eq(estimates.companyId, ctx.companyId), eq(estimates.projectId, projectId)))
+    .orderBy(asc(estimates.createdAt));
 }
 
 export async function getRevision(ctx: CompanyContext, revisionId: string) {
-  ctx.require("crm.read");
+  ctx.require("projects.read");
   const [row] = await ctx.db
     .select({ revision: estimateRevisions, estimate: estimates })
     .from(estimateRevisions)
@@ -130,24 +126,20 @@ export async function getRevision(ctx: CompanyContext, revisionId: string) {
 
 /** CSV export of a saved revision. Uses the stored snapshot, never a recalculation. */
 export async function exportRevisionCsv(ctx: CompanyContext, revisionId: string) {
-  ctx.require("crm.export");
+  ctx.require("estimate.export");
   const rev = await getRevision(ctx, revisionId);
-  const csv = takeoffToCsv({
-    scopeLabel: rev.scopeLabel,
-    title: rev.estimate.title,
-    revisionNumber: rev.revisionNumber,
-    lineItems: rev.lineItems,
-    subtotalCents: rev.subtotalCents,
-  });
+  const csv = estimateToCsv({ title: rev.estimate.title, revisionNumber: rev.revisionNumber, build: rev });
   const filename = `${rev.estimate.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-rev${rev.revisionNumber}.csv`;
   return { csv, filename };
 }
 
-function parseRevision(r: typeof estimateRevisions.$inferSelect) {
+export function parseRevision(r: typeof estimateRevisions.$inferSelect) {
   return {
     ...r,
     designSnapshot: deckDesignModelSchema.parse(r.designSnapshot),
+    framingSnapshot: r.framingSnapshot as FramingResult,
     productSnapshot: r.productSnapshot as PricedProduct,
-    lineItems: r.lineItems as EstimateLineItem[],
+    settings: r.settings as EstimateBuild["settings"],
+    sections: r.sections as EstimateSection[],
   };
 }

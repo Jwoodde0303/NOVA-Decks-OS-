@@ -8,10 +8,10 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   unique,
-  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -85,6 +85,19 @@ export const verification = pgTable("verification", {
 /* Workspaces & access                                                         */
 /* -------------------------------------------------------------------------- */
 
+export interface CompanySettings {
+  /** Default decking waste factor applied to board counts, percent. */
+  wastePct: number;
+  /** Default markup on all material and labor lines, percent. */
+  markupPct: number;
+  /** Sales tax applied to materials, percent. */
+  materialTaxPct: number;
+  /** Jurisdiction rule set for framing, e.g. "fairfax-county-va-2021.0". */
+  framingRuleset: string;
+}
+
+export const DEFAULT_COMPANY_SETTINGS: CompanySettings = { wastePct: 10, markupPct: 25, materialTaxPct: 0, framingRuleset: "fairfax-county-va-2021.0" };
+
 export const companies = pgTable(
   "companies",
   {
@@ -92,7 +105,8 @@ export const companies = pgTable(
     slug: text("slug").notNull().unique(),
     name: text("name").notNull(),
     timezone: text("timezone").notNull().default("America/New_York"),
-    nextJobNumber: integer("next_job_number").notNull().default(1001),
+    settings: jsonb("settings").$type<CompanySettings>().notNull().default(DEFAULT_COMPANY_SETTINGS),
+    nextProjectNumber: integer("next_project_number").notNull().default(1001),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -123,238 +137,62 @@ export const memberships = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
-/* CRM                                                                         */
+/* Projects (the link to the contractor's CRM job)                             */
 /* -------------------------------------------------------------------------- */
 
-export const customers = pgTable(
-  "customers",
+export const CRM_PROVIDERS = ["jobtread", "acculynx", "other"] as const;
+export type CrmProvider = (typeof CRM_PROVIDERS)[number];
+
+export interface ExternalCrmLink {
+  provider: CrmProvider;
+  externalId: string;
+  url?: string | null;
+  label?: string | null;
+}
+
+/**
+ * A project is the minimal record an estimate hangs off: a name, the site address and a pointer
+ * to the job in whatever CRM the company runs (JobTread, AccuLynx, …). No pipeline lives here.
+ */
+export const projects = pgTable(
+  "projects",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id")
       .notNull()
       .references(() => companies.id, { onDelete: "cascade" }),
-    displayName: text("display_name").notNull(),
-    kind: text("kind", { enum: ["residential", "commercial"] }).notNull().default("residential"),
+    projectNumber: text("project_number").notNull(),
+    name: text("name").notNull(),
+    status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+    clientName: text("client_name"),
+    clientPhone: text("client_phone"),
+    clientEmail: text("client_email"),
+    siteLine1: text("site_line1"),
+    siteLine2: text("site_line2"),
+    siteCity: text("site_city"),
+    siteRegion: text("site_region"),
+    sitePostalCode: text("site_postal_code"),
+    jurisdiction: text("jurisdiction").notNull().default("Fairfax County, VA"),
+    externalCrm: jsonb("external_crm").$type<ExternalCrmLink | null>(),
     notes: text("notes"),
     createdBy: text("created_by").references(() => user.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
-    unique("customers_company_id_uq").on(t.companyId, t.id),
-    index("customers_company_name_idx").on(t.companyId, t.displayName),
+    unique("projects_company_id_uq").on(t.companyId, t.id),
+    unique("projects_company_number_uq").on(t.companyId, t.projectNumber),
+    index("projects_company_name_idx").on(t.companyId, t.name),
   ],
 );
 
-export const customerContacts = pgTable(
-  "customer_contacts",
+/** Lightweight history: who saved what, on which project. */
+export const projectEvents = pgTable(
+  "project_events",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull(),
-    customerId: uuid("customer_id").notNull(),
-    name: text("name").notNull(),
-    role: text("role"),
-    email: text("email"),
-    phone: text("phone"),
-    isPrimary: boolean("is_primary").notNull().default(false),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    foreignKey({
-      name: "contacts_customer_fk",
-      columns: [t.companyId, t.customerId],
-      foreignColumns: [customers.companyId, customers.id],
-    }).onDelete("cascade"),
-    index("contacts_customer_idx").on(t.companyId, t.customerId),
-  ],
-);
-
-export const customerAddresses = pgTable(
-  "customer_addresses",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull(),
-    customerId: uuid("customer_id").notNull(),
-    label: text("label").notNull().default("Project site"),
-    line1: text("line1").notNull(),
-    line2: text("line2"),
-    city: text("city").notNull(),
-    region: text("region").notNull(),
-    postalCode: text("postal_code").notNull(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    unique("addresses_company_customer_id_uq").on(t.companyId, t.customerId, t.id),
-    foreignKey({
-      name: "addresses_customer_fk",
-      columns: [t.companyId, t.customerId],
-      foreignColumns: [customers.companyId, customers.id],
-    }).onDelete("cascade"),
-  ],
-);
-
-export const STAGE_KINDS = ["open", "won", "lost"] as const;
-
-export const pipelineStages = pgTable(
-  "pipeline_stages",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id")
-      .notNull()
-      .references(() => companies.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    position: integer("position").notNull(),
-    kind: text("kind", { enum: STAGE_KINDS }).notNull().default("open"),
-  },
-  (t) => [
-    unique("stages_company_id_uq").on(t.companyId, t.id),
-    unique("stages_company_name_uq").on(t.companyId, t.name),
-  ],
-);
-
-export const SERVICE_TYPES = ["deck", "sunroom", "patio", "exterior_renovation", "other"] as const;
-export const LEAD_SOURCES = [
-  "referral",
-  "website",
-  "google",
-  "social",
-  "repeat_customer",
-  "yard_sign",
-  "home_show",
-  "other",
-] as const;
-
-export const opportunities = pgTable(
-  "opportunities",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull(),
-    customerId: uuid("customer_id").notNull(),
-    addressId: uuid("address_id"),
-    title: text("title").notNull(),
-    serviceType: text("service_type", { enum: SERVICE_TYPES }).notNull(),
-    leadSource: text("lead_source", { enum: LEAD_SOURCES }).notNull(),
-    stageId: uuid("stage_id").notNull(),
-    assigneeUserId: text("assignee_user_id"),
-    nextFollowUpOn: date("next_follow_up_on"),
-    lostReason: text("lost_reason"),
-    createdBy: text("created_by").references(() => user.id),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    unique("opps_company_id_uq").on(t.companyId, t.id),
-    foreignKey({
-      name: "opps_customer_fk",
-      columns: [t.companyId, t.customerId],
-      foreignColumns: [customers.companyId, customers.id],
-    }),
-    foreignKey({
-      name: "opps_address_fk",
-      columns: [t.companyId, t.customerId, t.addressId],
-      foreignColumns: [customerAddresses.companyId, customerAddresses.customerId, customerAddresses.id],
-    }),
-    foreignKey({
-      name: "opps_stage_fk",
-      columns: [t.companyId, t.stageId],
-      foreignColumns: [pipelineStages.companyId, pipelineStages.id],
-    }),
-    foreignKey({
-      name: "opps_assignee_member_fk",
-      columns: [t.companyId, t.assigneeUserId],
-      foreignColumns: [memberships.companyId, memberships.userId],
-    }),
-    index("opps_company_stage_idx").on(t.companyId, t.stageId),
-    index("opps_company_followup_idx").on(t.companyId, t.nextFollowUpOn),
-  ],
-);
-
-export const jobs = pgTable(
-  "jobs",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull(),
-    opportunityId: uuid("opportunity_id").notNull(),
-    customerId: uuid("customer_id").notNull(),
-    addressId: uuid("address_id"),
-    jobNumber: text("job_number").notNull(),
-    title: text("title").notNull(),
-    serviceType: text("service_type", { enum: SERVICE_TYPES }).notNull(),
-    status: text("status", { enum: ["active", "complete", "cancelled"] }).notNull().default("active"),
-    createdBy: text("created_by").references(() => user.id),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    // One job per opportunity: the backstop that makes conversion idempotent.
-    uniqueIndex("jobs_opportunity_uq").on(t.opportunityId),
-    unique("jobs_company_id_uq").on(t.companyId, t.id),
-    unique("jobs_company_number_uq").on(t.companyId, t.jobNumber),
-    foreignKey({
-      name: "jobs_opportunity_fk",
-      columns: [t.companyId, t.opportunityId],
-      foreignColumns: [opportunities.companyId, opportunities.id],
-    }),
-    foreignKey({
-      name: "jobs_customer_fk",
-      columns: [t.companyId, t.customerId],
-      foreignColumns: [customers.companyId, customers.id],
-    }),
-    foreignKey({
-      name: "jobs_address_fk",
-      columns: [t.companyId, t.customerId, t.addressId],
-      foreignColumns: [customerAddresses.companyId, customerAddresses.customerId, customerAddresses.id],
-    }),
-  ],
-);
-
-export const tasks = pgTable(
-  "tasks",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull(),
-    opportunityId: uuid("opportunity_id"),
-    jobId: uuid("job_id"),
-    title: text("title").notNull(),
-    ownerUserId: text("owner_user_id").notNull(),
-    dueOn: date("due_on").notNull(),
-    completedAt: ts("completed_at"),
-    completedBy: text("completed_by").references(() => user.id),
-    createdBy: text("created_by").references(() => user.id),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    foreignKey({
-      name: "tasks_opportunity_fk",
-      columns: [t.companyId, t.opportunityId],
-      foreignColumns: [opportunities.companyId, opportunities.id],
-    }).onDelete("cascade"),
-    foreignKey({
-      name: "tasks_job_fk",
-      columns: [t.companyId, t.jobId],
-      foreignColumns: [jobs.companyId, jobs.id],
-    }),
-    foreignKey({
-      name: "tasks_owner_member_fk",
-      columns: [t.companyId, t.ownerUserId],
-      foreignColumns: [memberships.companyId, memberships.userId],
-    }),
-    index("tasks_company_owner_due_idx").on(t.companyId, t.ownerUserId, t.dueOn),
-  ],
-);
-
-/** Chronological history: notes plus system-recorded major changes, always with the actor. */
-export const activities = pgTable(
-  "activities",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id").notNull(),
-    customerId: uuid("customer_id").notNull(),
-    opportunityId: uuid("opportunity_id"),
-    jobId: uuid("job_id"),
+    projectId: uuid("project_id").notNull(),
     actorUserId: text("actor_user_id").references(() => user.id),
     kind: text("kind").notNull(),
     body: text("body").notNull(),
@@ -362,23 +200,8 @@ export const activities = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    foreignKey({
-      name: "activities_customer_fk",
-      columns: [t.companyId, t.customerId],
-      foreignColumns: [customers.companyId, customers.id],
-    }).onDelete("cascade"),
-    foreignKey({
-      name: "activities_opportunity_fk",
-      columns: [t.companyId, t.opportunityId],
-      foreignColumns: [opportunities.companyId, opportunities.id],
-    }).onDelete("cascade"),
-    foreignKey({
-      name: "activities_job_fk",
-      columns: [t.companyId, t.jobId],
-      foreignColumns: [jobs.companyId, jobs.id],
-    }),
-    index("activities_opp_idx").on(t.companyId, t.opportunityId, t.createdAt),
-    index("activities_customer_idx").on(t.companyId, t.customerId, t.createdAt),
+    foreignKey({ name: "project_events_project_fk", columns: [t.companyId, t.projectId], foreignColumns: [projects.companyId, projects.id] }).onDelete("cascade"),
+    index("project_events_project_idx").on(t.companyId, t.projectId, t.createdAt),
   ],
 );
 
@@ -386,7 +209,13 @@ export const activities = pgTable(
 /* Catalog & pricing                                                           */
 /* -------------------------------------------------------------------------- */
 
-/** Manufacturer catalog data. Shared across workspaces; contains no pricing. */
+export const DECKING_PROFILES = ["square-edge", "grooved", "tongue-and-groove"] as const;
+export const DECKING_MATERIALS = ["capped-wood-composite", "capped-pvc", "mineral-composite", "wood", "fictional"] as const;
+
+/**
+ * Manufacturer catalog data. Shared across workspaces; contains no pricing.
+ * `installation` carries the manufacturer's installation requirements that the framing generator honours.
+ */
 export const catalogProducts = pgTable(
   "catalog_products",
   {
@@ -396,14 +225,28 @@ export const catalogProducts = pgTable(
     productLine: text("product_line").notNull(),
     name: text("name").notNull(),
     sku: text("sku").notNull(),
+    color: text("color"),
+    /** Approximate sRGB hex for previews; not a manufacturer colour specification. */
+    colorHex: text("color_hex"),
+    profile: text("profile", { enum: DECKING_PROFILES }).notNull().default("square-edge"),
+    material: text("material", { enum: DECKING_MATERIALS }).notNull().default("fictional"),
+    thicknessIn: real("thickness_in"),
+    widthActualIn: real("width_actual_in"),
     stockLengthIn: integer("stock_length_in").notNull(),
-    effectiveWidthIn: integer("effective_width_in").notNull(),
+    /** Installed width per row = actual width + manufacturer side gap. */
+    effectiveWidthIn: real("effective_width_in").notNull(),
+    installation: jsonb("installation").$type<Record<string, unknown>>().notNull().default({}),
     attributes: jsonb("attributes").$type<Record<string, unknown>>().notNull().default({}),
     dataSource: text("data_source").notNull(),
+    dataEffectiveOn: date("data_effective_on"),
+    /** False until someone checks the row against the manufacturer's current data sheet. */
+    verified: boolean("verified").notNull().default(false),
+    active: boolean("active").notNull().default(true),
     createdAt: createdAt(),
   },
   (t) => [
     unique("catalog_mfr_sku_uq").on(t.manufacturer, t.sku),
+    index("catalog_browse_idx").on(t.category, t.manufacturer, t.productLine, t.color),
     check("catalog_positive_dims", sql`${t.stockLengthIn} > 0 and ${t.effectiveWidthIn} > 0`),
   ],
 );
@@ -441,13 +284,42 @@ export const companyProductPrices = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    foreignKey({
-      name: "prices_supplier_fk",
-      columns: [t.companyId, t.supplierId],
-      foreignColumns: [suppliers.companyId, suppliers.id],
-    }),
+    foreignKey({ name: "prices_supplier_fk", columns: [t.companyId, t.supplierId], foreignColumns: [suppliers.companyId, suppliers.id] }),
     index("prices_lookup_idx").on(t.companyId, t.catalogProductId, t.effectiveOn),
     check("prices_nonneg", sql`${t.unitPriceCents} >= 0`),
+  ],
+);
+
+export const PRICE_BOOK_CATEGORIES = ["lumber", "hardware", "fastener", "concrete", "railing", "labor", "other"] as const;
+export const PRICE_UNITS = ["each", "lf", "sqft", "bag", "hour", "riser", "footing"] as const;
+export type PriceUnit = (typeof PRICE_UNITS)[number];
+
+/**
+ * Company price book for everything that is not a manufacturer decking SKU: treated lumber,
+ * hangers, fasteners, concrete, railing, labor rates. Keyed by a stable item key the estimating
+ * engine asks for (e.g. "lumber.pt.2x8"). Append-only by effective date.
+ */
+export const priceBookItems = pgTable(
+  "price_book_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    category: text("category", { enum: PRICE_BOOK_CATEGORIES }).notNull(),
+    description: text("description").notNull(),
+    unit: text("unit", { enum: PRICE_UNITS }).notNull(),
+    unitPriceCents: integer("unit_price_cents").notNull(),
+    source: text("source").notNull(),
+    effectiveOn: date("effective_on").notNull(),
+    createdBy: text("created_by").references(() => user.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("price_book_company_key_date_uq").on(t.companyId, t.key, t.effectiveOn),
+    index("price_book_lookup_idx").on(t.companyId, t.key, t.effectiveOn),
+    check("price_book_nonneg", sql`${t.unitPriceCents} >= 0`),
   ],
 );
 
@@ -460,8 +332,7 @@ export const deckDesigns = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull(),
-    opportunityId: uuid("opportunity_id").notNull(),
-    jobId: uuid("job_id"),
+    projectId: uuid("project_id").notNull(),
     name: text("name").notNull(),
     model: jsonb("model").notNull(),
     version: integer("version").notNull().default(1),
@@ -472,52 +343,38 @@ export const deckDesigns = pgTable(
   },
   (t) => [
     unique("designs_company_id_uq").on(t.companyId, t.id),
-    foreignKey({
-      name: "designs_opportunity_fk",
-      columns: [t.companyId, t.opportunityId],
-      foreignColumns: [opportunities.companyId, opportunities.id],
-    }),
-    foreignKey({
-      name: "designs_job_fk",
-      columns: [t.companyId, t.jobId],
-      foreignColumns: [jobs.companyId, jobs.id],
-    }),
+    foreignKey({ name: "designs_project_fk", columns: [t.companyId, t.projectId], foreignColumns: [projects.companyId, projects.id] }).onDelete("cascade"),
+    index("designs_project_idx").on(t.companyId, t.projectId),
   ],
 );
+
+export const ESTIMATE_STATUSES = ["draft", "sent", "accepted", "declined"] as const;
 
 export const estimates = pgTable(
   "estimates",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull(),
-    opportunityId: uuid("opportunity_id").notNull(),
-    jobId: uuid("job_id"),
+    projectId: uuid("project_id").notNull(),
     designId: uuid("design_id"),
     title: text("title").notNull(),
+    status: text("status", { enum: ESTIMATE_STATUSES }).notNull().default("draft"),
     createdBy: text("created_by").references(() => user.id),
     createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [
     unique("estimates_company_id_uq").on(t.companyId, t.id),
-    foreignKey({
-      name: "estimates_opportunity_fk",
-      columns: [t.companyId, t.opportunityId],
-      foreignColumns: [opportunities.companyId, opportunities.id],
-    }),
-    foreignKey({
-      name: "estimates_job_fk",
-      columns: [t.companyId, t.jobId],
-      foreignColumns: [jobs.companyId, jobs.id],
-    }),
-    foreignKey({
-      name: "estimates_design_fk",
-      columns: [t.companyId, t.designId],
-      foreignColumns: [deckDesigns.companyId, deckDesigns.id],
-    }),
+    foreignKey({ name: "estimates_project_fk", columns: [t.companyId, t.projectId], foreignColumns: [projects.companyId, projects.id] }).onDelete("cascade"),
+    foreignKey({ name: "estimates_design_fk", columns: [t.companyId, t.designId], foreignColumns: [deckDesigns.companyId, deckDesigns.id] }),
+    index("estimates_project_idx").on(t.companyId, t.projectId),
   ],
 );
 
-/** Immutable once written. Holds full snapshots so later design/catalog/price edits never change it. */
+/**
+ * Immutable once written. Holds full snapshots (design, framing, product, prices, settings) so later
+ * design, catalog or price changes never alter a saved revision.
+ */
 export const estimateRevisions = pgTable(
   "estimate_revisions",
   {
@@ -525,22 +382,50 @@ export const estimateRevisions = pgTable(
     companyId: uuid("company_id").notNull(),
     estimateId: uuid("estimate_id").notNull(),
     revisionNumber: integer("revision_number").notNull(),
-    status: text("status", { enum: ["draft"] }).notNull().default("draft"),
     scopeLabel: text("scope_label").notNull(),
     designVersion: integer("design_version").notNull(),
     designSnapshot: jsonb("design_snapshot").notNull(),
+    framingSnapshot: jsonb("framing_snapshot").notNull(),
     productSnapshot: jsonb("product_snapshot").notNull(),
-    lineItems: jsonb("line_items").notNull(),
-    subtotalCents: integer("subtotal_cents").notNull(),
+    settings: jsonb("settings").notNull(),
+    sections: jsonb("sections").notNull(),
+    warnings: jsonb("warnings").$type<string[]>().notNull().default([]),
+    materialsCents: integer("materials_cents").notNull(),
+    laborCents: integer("labor_cents").notNull(),
+    markupCents: integer("markup_cents").notNull(),
+    taxCents: integer("tax_cents").notNull(),
+    totalCents: integer("total_cents").notNull(),
     createdBy: text("created_by").references(() => user.id),
     createdAt: createdAt(),
   },
   (t) => [
     unique("revisions_estimate_number_uq").on(t.estimateId, t.revisionNumber),
-    foreignKey({
-      name: "revisions_estimate_fk",
-      columns: [t.companyId, t.estimateId],
-      foreignColumns: [estimates.companyId, estimates.id],
-    }).onDelete("cascade"),
+    foreignKey({ name: "revisions_estimate_fk", columns: [t.companyId, t.estimateId], foreignColumns: [estimates.companyId, estimates.id] }).onDelete("cascade"),
   ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Integrations                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Per-company CRM integration settings. Secrets are never stored here: `credentialRef` names the
+ * environment variable / secret-manager entry that holds the API key for this company+provider.
+ */
+export const integrations = pgTable(
+  "integrations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: CRM_PROVIDERS }).notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
+    credentialRef: text("credential_ref"),
+    lastSyncAt: ts("last_sync_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique("integrations_company_provider_uq").on(t.companyId, t.provider)],
 );

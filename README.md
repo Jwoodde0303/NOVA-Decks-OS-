@@ -1,32 +1,32 @@
 # NOVA Decks OS
 
-A multi-company web application for deck, sunroom, patio and exterior renovation contractors: CRM, deck design and estimating in one deployable app. NOVA Decks & Exteriors is the first workspace; every company gets its own private workspace, users, customers, projects, pricing and settings.
+Deck CAD + estimating software for deck and exterior contractors, built to be hosted as private company workspaces. It designs the deck, generates code-compliant framing (Fairfax County, VA *Typical Deck Details* today), applies the decking manufacturer's own installation rules, prices everything from the company's price book, and produces immutable estimate revisions. It plugs into the contractor's CRM (JobTread, AccuLynx, …) rather than running a pipeline of its own.
 
-**Status:** Milestone 1 (CRM + deck design tied to a job). Not deployed. JobTread and QuickBooks stay the operating systems while this is validated. All product data and prices are fictional.
+**Status:** milestone 3 (CAD + estimating pivot). Not deployed. Manufacturer catalog data is transcribed from current published guides and flagged until verified; all prices are fictional.
 
 ## Stack
 Next.js 16 (App Router, React 19) · TypeScript · PostgreSQL · Drizzle ORM + SQL migrations · Better Auth · Tailwind CSS 4 · three.js · Vitest
 
-Module layout and design notes: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md). Roles: [docs/ROLES.md](docs/ROLES.md). Framing generator (Fairfax County Typical Deck Details): [docs/FRAMING.md](docs/FRAMING.md). Hosting: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Future work: [docs/ROADMAP.md](docs/ROADMAP.md).
+Docs: [Implementation plan](docs/IMPLEMENTATION_PLAN.md) · [Roles](docs/ROLES.md) · [Framing generator](docs/FRAMING.md) · [Catalog](docs/CATALOG.md) · [Estimating engine](docs/ESTIMATING.md) · [CRM integrations](docs/INTEGRATIONS.md) · [Deployment](docs/DEPLOYMENT.md) · [Roadmap](docs/ROADMAP.md)
 
 ## Requirements
 - Node.js 22.12+ (developed on 26 LTS)
-- PostgreSQL 15+ — **or nothing**: `npm run db:local` runs an embedded PostgreSQL in `.data/` for local development, no Homebrew/Docker needed.
+- PostgreSQL 15+ — **or nothing**: `npm run db:local` runs an embedded PostgreSQL in `.data/` for local development.
 
 ## Commands
 | Command | What it does |
 | --- | --- |
 | `npm install` | Install dependencies |
 | `cp .env.example .env` | Create local config (fill in the placeholders) |
-| `npm run db:local` | Start the embedded local PostgreSQL (leave running; Ctrl+C stops it) |
+| `npm run db:local` | Start the embedded local PostgreSQL (leave running) |
 | `npm run db:migrate` | Apply SQL migrations in `drizzle/` to `DATABASE_URL` |
-| `npm run db:seed` | Seed two fictional workspaces, demo users, stages, catalog, prices and sample CRM data (safe to re-run) |
+| `npm run db:seed` | Sync the manufacturer catalog and seed two fictional workspaces, demo users, price books and sample projects (idempotent) |
 | `npm run dev` | Start the app on http://localhost:3000 |
-| `npm test` | Run the test suite against a throwaway embedded PostgreSQL (or `TEST_DATABASE_URL` if set) |
+| `npm test` | Run the test suite against a throwaway embedded PostgreSQL (or `TEST_DATABASE_URL`) |
 | `npm run lint` / `npm run typecheck` | ESLint / `tsc --noEmit` |
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run check` | lint + typecheck + test + build (what CI runs) |
-| `npm run db:generate` | Generate a new migration after editing `src/db/schema.ts` |
+| `npm run db:generate` | Generate a migration after editing `src/db/schema.ts` |
 
 ## Local run (first time)
 ```bash
@@ -37,7 +37,7 @@ npm run db:migrate       # terminal 2
 npm run db:seed
 npm run dev
 ```
-Open http://localhost:3000 and sign in with a seeded user (password = `SEED_DEMO_PASSWORD` from your `.env`):
+Sign in at http://localhost:3000 (password = `SEED_DEMO_PASSWORD` from your `.env`):
 
 | Workspace | Owner/Admin | Team Member |
 | --- | --- | --- |
@@ -46,19 +46,20 @@ Open http://localhost:3000 and sign in with a seeded user (password = `SEED_DEMO
 
 Self-service sign-up is disabled (`ALLOW_SIGNUP=false`).
 
-## Walkthrough: lead → deck estimate → job, and company isolation
-1. **Create a lead.** Sign in as `owner@nova.example`. Dashboard → **New inquiry**. Enter a new customer name, a project address, title "Rear composite deck", service *Deck*, source *Referral*, assign to Sam, follow-up date today. Create. You land on the opportunity; the Activity timeline shows "Inquiry created" with your name.
-2. **Work the lead.** Change stage to *Consultation Scheduled* and update. Add a note and a task for Sam. The timeline records each change with who did it. Pipeline → filter by assignee *Sam Estimator* or tick *Overdue follow-up*.
-3. **Design the deck.** On the opportunity, **New deck design**. The editor opens with the seeded fixture: 20 ft × 12 ft, 4 ft high, 6 ft stair at a 4 ft offset. Choose *Northline Harbor Grey 20 ft* ($60): the takeoff shows **24 boards, $1,440**. Switch to the *10 ft* board ($34): **48 boards, $1,632**. Set depth to 13 ft: **52 boards, $1,768**. Set depth back to 12 ft and stair offset to 7 ft: plan and 3D update, each remaining outer-edge segment reads 7', open perimeter reads 38'. Set the offset to 16 ft: a red validation error appears, the plan highlights the overrun, and "Save draft estimate" is blocked. Set it back to 7 ft.
-4. **Check the framing.** Below the takeoff, the *Framing details* panel is generated live from the same design to Fairfax County's *Typical Deck Details* (v2021.0): for the fixture it sizes 2x8 joists @ 16" with a 1' overhang, a (2)2x12 dropped beam on 3 posts with type E footings, a 2x8 ledger with ½" lags @ 15" o.c., 4x4 posts (28½"), no lateral method, guards, and a 5-stringer stair. Change *Posts* to 4 and watch the beam drop to (2)2x8 on type B footings; set the height to 9' and the stair is flagged for exceeding the 6'-9" cut-stringer span. The 3D preview shows the generated joists, beam, posts and footings.
-5. **Save design and estimate.** **Save design**, then **Save draft estimate revision**. The estimate page shows revision 1 labelled *Draft · Decking materials only* with **Export CSV**. Go back to the design, change depth to 13 ft, save, and add a second revision: revision 1 is unchanged.
-6. **Convert to a job.** On the opportunity, set stage to *Won* and update, then **Convert to job** (Owner/Admin only; Sam sees a note instead). The job page shows the customer, address, carried-over design and estimate, and the full history ending with "Converted to job J-1001". Press back and click *Convert* again, or reload the opportunity: it links to the same job; no duplicate is created.
-7. **Verify isolation.** Copy the opportunity URL. Sign out, sign in as `owner@blueridge.example`. Their pipeline shows only Blue Ridge data. Paste the NOVA URL (or swap `/c/blue-ridge/` into it): **404**. Try the CSV URL from step 4: **404**. Blue Ridge's price for the same 20 ft board is $64, so the same design there prices at $1,536.
+## Walkthrough
+1. **Project.** Sign in as `owner@nova.example`. *Projects → New project*: name it, enter the site address, pick *JobTread* and a job id to link it. The project page shows designs, estimates and history.
+2. **Design.** *New deck design*. The editor opens with the fixture (20' × 12', 4' high, 6' stair at 4'). Pick decking with the cascading picker — e.g. Trex → Transcend Tropicals → Spiced Rum → grooved 5.5" → 16 ft; the 3D preview takes the colour. The takeoff shows rows at the *installed* width (5.5" + Trex's 3/16" gap).
+3. **Framing.** Below, the framing panel is generated live to Fairfax County's *Typical Deck Details* (2x8 @ 16", (2)2x12 beam on 3 posts, type E footings, ½" lags @ 15", guards, stair) and lists the manufacturer rules it applied (Trex: 12" stringer spacing, 5 stringers over 36"). Set joist spacing to 24": the panel blocks it because Trex 1" boards allow 16" maximum. Switch to TimberTech Vintage *MAX* (1.5" boards) and 24" is accepted.
+4. **Estimate.** *Save design*, then *Save estimate revision*. The estimate page shows decking with waste, framing lumber, hardware, footings (concrete bags), stairs, guards and labor, with materials/labor/markup/tax totals; unpriced items are flagged. Export CSV. Change the design or a price and save another revision: revision 1 is unchanged.
+5. **Pricing & catalog.** *Pricing* holds the estimate settings (waste 10%, markup 25%, tax), the price book (all keys the engine uses) and per-SKU decking prices; search the catalog to price a new board. *Catalog* lists every collection with its installation rules and sources.
+6. **Integrations.** *Integrations* shows JobTread/AccuLynx cards: enable, name the environment variable that holds the API key, test the connection (reports what is missing — the live API clients are the next step).
+7. **Isolation.** Sign in as `owner@blueridge.example`: only Blue Ridge projects, prices (the same Trex board is $83 there) and integrations are visible; any NOVA URL returns 404.
 
 ## Tests
-`npm test` covers: the Fairfax County table transcriptions and framing generator (joist/beam/footing/ledger/lateral/guard/stair sizing, option handling and prohibited conditions), the deck fixture numbers above (board counts, totals, segments, perimeter, validation blocking export), CSV output, lead → job workflow with activity history and filters, repeat/concurrent conversion returning one job, estimate revisions staying intact after design and price changes, Team Member permission limits, and cross-company reads/writes/exports by ID (including a raw SQL insert blocked by the composite foreign key).
+`npm test` covers: the deck fixture numbers (board counts, perimeter, validation), Fairfax County table transcriptions and the framing generator, manufacturer catalog integrity and item-number formats, manufacturer rules in framing (joist spacing limits, stringer spacing/minimums), the estimating engine (quantities, totals, unpriced warnings, blocked estimates), project → design → estimate revisions staying intact after design/price changes, role limits, and cross-company reads/writes/exports by ID (including a raw insert blocked by a composite foreign key).
 
 ## Security notes
-- Company context is derived on the server from the signed-in user's membership and the URL slug; no company id is accepted from the client. Every query filters by company, including lookups by id, and "not yours" returns the same 404 as "does not exist".
+- Company context is derived on the server from the signed-in user's membership and the URL slug; no company id is accepted from the client. Every query filters by company, including lookups by id; "not yours" returns the same 404 as "does not exist".
 - Child tables use composite foreign keys `(company_id, parent_id)`, so the database rejects cross-company links even if application code is bypassed.
+- CRM API keys are never stored: integrations reference an environment variable by name.
 - Secrets live in `.env` (git-ignored). `.env.example` has placeholders only.

@@ -1,36 +1,58 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "./client";
-import { account, catalogProducts, companies, companyProductPrices, memberships, pipelineStages, suppliers, user, type Role } from "./schema";
+import { account, catalogProducts, companies, companyProductPrices, memberships, priceBookItems, suppliers, user, DEFAULT_COMPANY_SETTINGS, type ExternalCrmLink, type Role } from "./schema";
 import { getAuth } from "@/lib/auth";
 import { buildCompanyContext } from "@/modules/core/context";
-import { addAddress, addContact, addTask, createCustomer, createOpportunity, addNote } from "@/modules/crm/service";
+import { syncCatalog } from "@/modules/catalog/service";
+import { PRICE_BOOK_CATALOG } from "@/modules/estimating/pricing";
+import { createProject } from "@/modules/projects/service";
 import { saveDesign } from "@/modules/design/service";
 import { DEFAULT_DECK_DESIGN } from "@/modules/design/model";
-import { createDraftRevision } from "@/modules/estimating/service";
-
-export const SEED_STAGES = [
-  { name: "New Inquiry", kind: "open" },
-  { name: "Consultation Scheduled", kind: "open" },
-  { name: "Estimating", kind: "open" },
-  { name: "Proposal Sent", kind: "open" },
-  { name: "Won", kind: "won" },
-  { name: "Lost", kind: "lost" },
-] as const;
-
-/** Fictional manufacturer catalog. Prices are NOT here; they are company-specific. */
-export const SEED_CATALOG = [
-  { manufacturer: "Northline Composites", productLine: "Harbor", name: "Harbor Grey 20 ft", sku: "NL-HBR-GRY-20", stockLengthIn: 240, effectiveWidthIn: 6, dataSource: "fictional-seed" },
-  { manufacturer: "Northline Composites", productLine: "Harbor", name: "Harbor Grey 10 ft", sku: "NL-HBR-GRY-10", stockLengthIn: 120, effectiveWidthIn: 6, dataSource: "fictional-seed" },
-  { manufacturer: "Ridgewood Boards", productLine: "Cedar Tone", name: "Cedar Tone 16 ft", sku: "RW-CT-16", stockLengthIn: 192, effectiveWidthIn: 6, dataSource: "fictional-seed" },
-];
+import { createRevision } from "@/modules/estimating/service";
 
 export interface SeedWorkspace {
   slug: string;
   name: string;
   users: { email: string; name: string; role: Role }[];
   supplier: string;
-  prices: Record<string, number>; // sku → cents
+  /** Decking prices by manufacturer SKU, cents. Fictional. */
+  productPrices: Record<string, number>;
+  /** Price book multiplier against the fictional base prices below. */
+  priceBookFactor: number;
 }
+
+/** Fictional base prices for the price book (cents per unit). Companies override these. */
+export const BASE_PRICE_BOOK: Record<string, number> = {
+  "lumber.pt.2x6": 125,
+  "lumber.pt.2x8": 165,
+  "lumber.pt.2x10": 230,
+  "lumber.pt.2x12": 310,
+  "lumber.pt.4x4": 160,
+  "lumber.pt.6x6": 420,
+  "lumber.pt.2x4": 90,
+  "hardware.joist-hanger": 275,
+  "hardware.hurricane-tie": 120,
+  "hardware.ledger-fastener": 210,
+  "hardware.tension-tie": 1900,
+  "hardware.post-base": 2400,
+  "hardware.post-cap": 1800,
+  "hardware.through-bolt": 350,
+  "hardware.hold-down": 3200,
+  "hardware.stringer-hanger": 1400,
+  "hardware.flashing-lf": 260,
+  "fastener.hidden-clip-sqft": 95,
+  "fastener.deck-screw-sqft": 55,
+  "fastener.framing-lot": 8500,
+  "concrete.80lb-bag": 780,
+  "railing.guard-lf": 5200,
+  "railing.stair-guard-lf": 6400,
+  "riser.board-lf": 650,
+  "labor.deck-sqft": 2400,
+  "labor.ledger-lf": 1800,
+  "labor.footing-each": 14500,
+  "labor.stair-riser": 9500,
+  "labor.guard-lf": 2200,
+};
 
 export const SEED_WORKSPACES: SeedWorkspace[] = [
   {
@@ -41,7 +63,22 @@ export const SEED_WORKSPACES: SeedWorkspace[] = [
       { email: "sam@nova.example", name: "Sam Estimator", role: "member" },
     ],
     supplier: "Tidewater Building Supply (fictional)",
-    prices: { "NL-HBR-GRY-20": 6000, "NL-HBR-GRY-10": 3400, "RW-CT-16": 5200 },
+    productPrices: {
+      "NL-HBR-GRY-20": 6000,
+      "NL-HBR-GRY-10": 3400,
+      "RW-CT-16": 5200,
+      // Fictional prices for real manufacturer SKUs so the demo estimates price out.
+      SR010616TG01: 7900, // Trex Transcend Tropicals Spiced Rum 1x6x16 grooved
+      SR010620TG01: 9850,
+      SR010616TS01: 7900,
+      LCGV5416P: 8200, // TimberTech Legacy Pecan 1x6x16 grooved
+      LCGV5420P: 10250,
+      AGB15516CS: 9900, // TimberTech Vintage Coastline 1x6x16 grooved
+      "DEC-VOYAGE-KHAYA-G5.5-16": 8600, // Deckorators Voyage Khaya 1x6x16 grooved
+      "DEC-VOYAGE-KHAYA-G5.5-20": 10750,
+      "DEC-VISTA-IRONWO-G5.5-16": 6400,
+    },
+    priceBookFactor: 1,
   },
   {
     slug: "blue-ridge",
@@ -51,7 +88,8 @@ export const SEED_WORKSPACES: SeedWorkspace[] = [
       { email: "pat@blueridge.example", name: "Pat Crew Lead", role: "member" },
     ],
     supplier: "Mountain Lumber Co. (fictional)",
-    prices: { "NL-HBR-GRY-20": 6400, "NL-HBR-GRY-10": 3600 },
+    productPrices: { "NL-HBR-GRY-20": 6400, "NL-HBR-GRY-10": 3600, SR010616TG01: 8300, LCGV5416P: 8600 },
+    priceBookFactor: 1.08,
   },
 ];
 
@@ -69,7 +107,7 @@ export async function ensureUser(db: Db, u: { email: string; name: string }, pas
 export async function ensureCompany(db: Db, w: { slug: string; name: string }) {
   const [existing] = await db.select().from(companies).where(eq(companies.slug, w.slug));
   if (existing) return existing;
-  const [c] = await db.insert(companies).values({ slug: w.slug, name: w.name }).returning();
+  const [c] = await db.insert(companies).values({ slug: w.slug, name: w.name, settings: DEFAULT_COMPANY_SETTINGS }).returning();
   return c!;
 }
 
@@ -77,33 +115,28 @@ export async function ensureMembership(db: Db, companyId: string, userId: string
   await db.insert(memberships).values({ companyId, userId, role }).onConflictDoNothing();
 }
 
-export async function ensureStages(db: Db, companyId: string) {
-  for (const [i, s] of SEED_STAGES.entries()) {
-    await db.insert(pipelineStages).values({ companyId, name: s.name, position: i + 1, kind: s.kind }).onConflictDoNothing();
-  }
-  return db.select().from(pipelineStages).where(eq(pipelineStages.companyId, companyId)).orderBy(pipelineStages.position);
-}
-
-export async function ensureCatalog(db: Db) {
-  for (const p of SEED_CATALOG) {
-    await db.insert(catalogProducts).values({ category: "decking", ...p }).onConflictDoNothing();
-  }
-  return db.select().from(catalogProducts);
-}
-
 export async function ensurePrices(db: Db, companyId: string, supplierName: string, prices: Record<string, number>, effectiveOn = "2026-01-01") {
   let [sup] = await db.select().from(suppliers).where(and(eq(suppliers.companyId, companyId), eq(suppliers.name, supplierName)));
   if (!sup) [sup] = await db.insert(suppliers).values({ companyId, name: supplierName }).returning();
-  const catalog = await ensureCatalog(db);
   for (const [sku, cents] of Object.entries(prices)) {
-    const product = catalog.find((c) => c.sku === sku)!;
+    const [product] = await db.select({ id: catalogProducts.id }).from(catalogProducts).where(eq(catalogProducts.sku, sku));
+    if (!product) continue;
     const [existing] = await db
-      .select()
+      .select({ id: companyProductPrices.id })
       .from(companyProductPrices)
       .where(and(eq(companyProductPrices.companyId, companyId), eq(companyProductPrices.catalogProductId, product.id), eq(companyProductPrices.effectiveOn, effectiveOn)));
-    if (!existing) {
-      await db.insert(companyProductPrices).values({ companyId, catalogProductId: product.id, supplierId: sup!.id, unitPriceCents: cents, source: "seed:supplier-quote", effectiveOn });
-    }
+    if (!existing) await db.insert(companyProductPrices).values({ companyId, catalogProductId: product.id, supplierId: sup!.id, unitPriceCents: cents, source: "seed:fictional", effectiveOn });
+  }
+}
+
+export async function ensurePriceBook(db: Db, companyId: string, factor: number, effectiveOn = "2026-01-01") {
+  for (const item of PRICE_BOOK_CATALOG) {
+    const base = BASE_PRICE_BOOK[item.key];
+    if (base === undefined) continue;
+    await db
+      .insert(priceBookItems)
+      .values({ companyId, key: item.key, category: item.category, description: item.description, unit: item.unit, unitPriceCents: Math.round(base * factor), source: "seed:fictional", effectiveOn })
+      .onConflictDoNothing();
   }
 }
 
@@ -115,62 +148,46 @@ export async function seedWorkspace(db: Db, w: SeedWorkspace, password: string) 
     await ensureMembership(db, company.id, row.id, u.role);
     users.push({ ...u, id: row.id });
   }
-  await ensureStages(db, company.id);
-  await ensurePrices(db, company.id, w.supplier, w.prices);
+  await ensurePrices(db, company.id, w.supplier, w.productPrices);
+  await ensurePriceBook(db, company.id, w.priceBookFactor);
   return { company, users };
 }
 
 export async function seedAll(db: Db, opts: { password: string; sampleData?: boolean }) {
-  const sample = opts.sampleData ?? true;
+  const catalog = await syncCatalog(db);
   const workspaces = [];
   for (const w of SEED_WORKSPACES) {
     const { company, users } = await seedWorkspace(db, w, opts.password);
-    if (sample) await seedSampleCrm(db, w, users[0]!.id, users[1]!.id);
+    if (opts.sampleData ?? true) await seedSampleProjects(db, w, users[0]!.id);
     workspaces.push({ slug: w.slug, name: w.name, users: w.users, companyId: company.id });
   }
-  return { workspaces };
+  return { workspaces, catalog };
 }
 
-/** A few fictional customers/opportunities per workspace so the pipeline is not empty. Skips if data exists. */
-async function seedSampleCrm(db: Db, w: SeedWorkspace, ownerId: string, memberId: string) {
+/** A couple of fictional projects per workspace with a design and a priced estimate. Skips if projects exist. */
+async function seedSampleProjects(db: Db, w: SeedWorkspace, ownerId: string) {
   const ctx = await buildCompanyContext(ownerId, w.slug, db);
-  const { customers: customersTable } = await import("./schema");
-  const [any] = await db.select({ id: customersTable.id }).from(customersTable).where(eq(customersTable.companyId, ctx.companyId)).limit(1);
+  const { projects } = await import("./schema");
+  const [any] = await db.select({ id: projects.id }).from(projects).where(eq(projects.companyId, ctx.companyId)).limit(1);
   if (any) return;
-  const stages = await db.select().from(pipelineStages).where(eq(pipelineStages.companyId, ctx.companyId)).orderBy(pipelineStages.position);
-  const stage = (name: string) => stages.find((s) => s.name === name)!.id;
   const isNova = w.slug === "nova";
-  const samples = isNova
+  type Sample = { name: string; client: string; city: string; sku: string; crm: ExternalCrmLink | null; height?: number };
+  const samples: Sample[] = isNova
     ? [
-        { customer: "Avery & Morgan Chen", city: "Fairfax", st: "VA", title: "Backyard composite deck", stage: "Estimating", days: -2, assignee: memberId, design: true },
-        { customer: "Riley Thompson", city: "Leesburg", st: "VA", title: "Screened sunroom addition", stage: "Consultation Scheduled", days: 3, assignee: ownerId, service: "sunroom" as const },
-        { customer: "Dana Okafor", city: "Ashburn", st: "VA", title: "Paver patio + fire pit", stage: "New Inquiry", days: 0, assignee: null, service: "patio" as const },
+        { name: "Chen residence — rear composite deck", client: "Avery & Morgan Chen", city: "Fairfax", sku: "SR010616TG01", crm: { provider: "jobtread" as const, externalId: "JT-48213", url: "https://app.jobtread.com/jobs/JT-48213", label: "JobTread job 48213" } },
+        { name: "Thompson — elevated deck with stair", client: "Riley Thompson", city: "Leesburg", sku: "LCGV5416P", crm: null, height: 66 },
       ]
-    : [
-        { customer: "Harper Family", city: "Asheville", st: "NC", title: "Elevated deck with stair", stage: "Proposal Sent", days: 1, assignee: memberId, design: true },
-        { customer: "Blue Ridge Cabins LLC", city: "Boone", st: "NC", title: "Cabin porch rebuild", stage: "New Inquiry", days: -5, assignee: null },
-      ];
+    : [{ name: "Harper cabin deck", client: "Harper Family", city: "Asheville", sku: "SR010616TG01", crm: { provider: "acculynx" as const, externalId: "AL-9921", url: null, label: null } }];
   for (const s of samples) {
-    const c = await createCustomer(ctx, { displayName: s.customer });
-    await addContact(ctx, c.id, { name: s.customer.split(" & ")[0]!, email: `${c.id.slice(0, 6)}@example.com`, phone: "555-0100", isPrimary: true });
-    const a = await addAddress(ctx, c.id, { line1: "123 Example Ln", city: s.city, region: s.st, postalCode: "00000" });
-    const due = new Date(Date.now() + s.days * 86_400_000).toISOString().slice(0, 10);
-    const opp = await createOpportunity(ctx, {
-      customerId: c.id,
-      addressId: a.id,
-      title: s.title,
-      serviceType: "service" in s && s.service ? s.service : "deck",
-      leadSource: "referral",
-      stageId: stage(s.stage),
-      assigneeUserId: s.assignee,
-      nextFollowUpOn: due,
-    });
-    await addNote(ctx, opp.id, "Initial call: homeowner wants to start this season. (fictional seed note)");
-    await addTask(ctx, opp.id, { title: "Send consultation confirmation", ownerUserId: s.assignee ?? ownerId, dueOn: due });
-    if ("design" in s && s.design) {
-      const products = await db.select().from(catalogProducts).where(eq(catalogProducts.sku, "NL-HBR-GRY-20"));
-      const design = await saveDesign(ctx, { opportunityId: opp.id, name: "Main deck", model: { ...DEFAULT_DECK_DESIGN, deckingProductId: products[0]!.id } });
-      await createDraftRevision(ctx, { designId: design.id, catalogProductId: products[0]!.id });
+    const project = await createProject(ctx, { name: s.name, clientName: s.client, siteLine1: "123 Example Ln", siteCity: s.city, siteRegion: isNova ? "VA" : "NC", sitePostalCode: "00000", externalCrm: s.crm });
+    const [product] = await db.select({ id: catalogProducts.id }).from(catalogProducts).where(eq(catalogProducts.sku, s.sku));
+    const design = await saveDesign(ctx, { projectId: project.id, name: "Main deck", model: { ...DEFAULT_DECK_DESIGN, heightIn: s.height ?? DEFAULT_DECK_DESIGN.heightIn, deckingProductId: product?.id ?? null } });
+    if (product) {
+      try {
+        await createRevision(ctx, { designId: design.id });
+      } catch (e) {
+        console.warn(`Seed: could not create a sample estimate for "${s.name}": ${(e as Error).message}`);
+      }
     }
   }
 }

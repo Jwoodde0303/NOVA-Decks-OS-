@@ -1,33 +1,31 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
-import { getPool, type Db } from "@/db/client";
+import type { Db } from "@/db/client";
 import { buildCompanyContext, listUserCompanies, type CompanyContext } from "@/modules/core/context";
 import { ForbiddenError, NotFoundError } from "@/modules/core/errors";
-import * as crm from "@/modules/crm/service";
-import { getDesign, saveDesign } from "@/modules/design/service";
 import { DEFAULT_DECK_DESIGN } from "@/modules/design/model";
-import { createDraftRevision, exportRevisionCsv, getEstimate, getRevision } from "@/modules/estimating/service";
-import { getPricedProduct } from "@/modules/estimating/pricing";
-import { closeDb, ctxFor, freshSeededDb, productId, stageId } from "./helpers";
+import { getDesign, saveDesign } from "@/modules/design/service";
+import { getPriceBook, getPricedProduct } from "@/modules/estimating/pricing";
+import { createRevision, exportRevisionCsv, getEstimate, getRevision, setEstimateStatus } from "@/modules/estimating/service";
+import { listIntegrations, upsertIntegration } from "@/modules/integrations/service";
+import { archiveProject, createProject, getProject, listProjects, updateProject } from "@/modules/projects/service";
+import { closeDb, ctxFor, freshSeededDb, getPool, productId } from "./helpers";
 
 let db: Db;
 let nova: CompanyContext;
 let blue: CompanyContext;
-let novaData: { customerId: string; oppId: string; designId: string; estimateId: string; revisionId: string; taskId: string; jobId: string };
+let novaData: { projectId: string; designId: string; estimateId: string; revisionId: string };
 
 beforeAll(async () => {
   db = await freshSeededDb();
   nova = await ctxFor(db, "nova");
   blue = await ctxFor(db, "blue-ridge");
-  const c = await crm.createCustomer(nova, { displayName: "NOVA Only Customer" });
-  const opp = await crm.createOpportunity(nova, { customerId: c.id, title: "NOVA deck", serviceType: "deck", leadSource: "referral" });
-  const pid = await productId(db, "NL-HBR-GRY-20");
-  const design = await saveDesign(nova, { opportunityId: opp.id, name: "d", model: { ...DEFAULT_DECK_DESIGN, deckingProductId: pid } });
-  const rev = await createDraftRevision(nova, { designId: design.id, catalogProductId: pid });
-  const task = await crm.addTask(nova, opp.id, { title: "t", ownerUserId: nova.userId, dueOn: "2026-12-01" });
-  await crm.updateOpportunity(nova, opp.id, { stageId: await stageId(db, nova.companyId, "Won") });
-  const { job } = await crm.convertToJob(nova, opp.id);
-  novaData = { customerId: c.id, oppId: opp.id, designId: design.id, estimateId: rev.estimateId, revisionId: rev.id, taskId: task.id, jobId: job.id };
+  const pid = await productId(db, "SR010616TG01");
+  const p = await createProject(nova, { name: "NOVA only project", clientName: "NOVA Client" });
+  const design = await saveDesign(nova, { projectId: p.id, name: "d", model: { ...DEFAULT_DECK_DESIGN, deckingProductId: pid } });
+  const rev = await createRevision(nova, { designId: design.id });
+  await upsertIntegration(nova, { provider: "jobtread", enabled: true, credentialRef: "JOBTREAD_API_KEY_NOVA", settings: {} });
+  novaData = { projectId: p.id, designId: design.id, estimateId: rev.estimateId, revisionId: rev.id };
 });
 afterAll(closeDb);
 
@@ -39,78 +37,60 @@ describe("company isolation", () => {
   });
 
   it("lists and searches never include another company's records", async () => {
-    expect(await crm.listCustomers(blue)).toHaveLength(0);
-    expect(await crm.listCustomers(blue, "NOVA")).toHaveLength(0);
-    expect(await crm.listOpportunities(blue, { includeClosed: true, q: "NOVA" })).toHaveLength(0);
-    expect(await crm.listJobs(blue)).toHaveLength(0);
-    expect(await crm.listActivity(blue, { customerId: novaData.customerId })).toHaveLength(0);
-    expect((await crm.dashboard(blue)).open).toHaveLength(0);
+    expect(await listProjects(blue, { includeArchived: true })).toHaveLength(0);
+    expect(await listProjects(blue, { q: "NOVA" })).toHaveLength(0);
+    expect((await listIntegrations(blue)).find((i) => i.provider === "jobtread")!.row).toBeNull();
+    expect((await listIntegrations(nova)).find((i) => i.provider === "jobtread")!.row?.credentialRef).toBe("JOBTREAD_API_KEY_NOVA");
   });
 
   it("direct reads by ID from another company return not found", async () => {
-    await expect(crm.getCustomer(blue, novaData.customerId)).rejects.toThrow(NotFoundError);
-    await expect(crm.getOpportunity(blue, novaData.oppId)).rejects.toThrow(NotFoundError);
-    await expect(crm.getJob(blue, novaData.jobId)).rejects.toThrow(NotFoundError);
+    await expect(getProject(blue, novaData.projectId)).rejects.toThrow(NotFoundError);
     await expect(getDesign(blue, novaData.designId)).rejects.toThrow(NotFoundError);
     await expect(getEstimate(blue, novaData.estimateId)).rejects.toThrow(NotFoundError);
     await expect(getRevision(blue, novaData.revisionId)).rejects.toThrow(NotFoundError);
   });
 
   it("writes against another company's records are rejected and leave no trace", async () => {
-    await expect(crm.updateCustomer(blue, novaData.customerId, { displayName: "Hijacked" })).rejects.toThrow(NotFoundError);
-    await expect(crm.deleteCustomer(blue, novaData.customerId)).rejects.toThrow(NotFoundError);
-    await expect(crm.updateOpportunity(blue, novaData.oppId, { title: "Hijacked" })).rejects.toThrow(NotFoundError);
-    await expect(crm.addNote(blue, novaData.oppId, "intruder")).rejects.toThrow(NotFoundError);
-    await expect(crm.addTask(blue, novaData.oppId, { title: "x", ownerUserId: blue.userId, dueOn: "2026-12-01" })).rejects.toThrow(NotFoundError);
-    await expect(crm.completeTask(blue, novaData.taskId)).rejects.toThrow(NotFoundError);
-    await expect(crm.convertToJob(blue, novaData.oppId)).rejects.toThrow(NotFoundError);
-    await expect(crm.addContact(blue, novaData.customerId, { name: "x" })).rejects.toThrow(NotFoundError);
-    await expect(crm.addAddress(blue, novaData.customerId, { line1: "x", city: "y", region: "z", postalCode: "1" })).rejects.toThrow(NotFoundError);
-    await expect(saveDesign(blue, { id: novaData.designId, opportunityId: novaData.oppId, name: "x", model: DEFAULT_DECK_DESIGN })).rejects.toThrow(NotFoundError);
-    await expect(saveDesign(blue, { opportunityId: novaData.oppId, name: "x", model: DEFAULT_DECK_DESIGN })).rejects.toThrow(NotFoundError);
-    await expect(createDraftRevision(blue, { designId: novaData.designId, catalogProductId: await productId(db, "NL-HBR-GRY-20") })).rejects.toThrow(NotFoundError);
-
-    const nv = await crm.getOpportunity(nova, novaData.oppId);
-    expect(nv.opp.title).toBe("NOVA deck");
-    expect(nv.customer.displayName).toBe("NOVA Only Customer");
-    expect(nv.timeline.some((t) => t.activity.body === "intruder")).toBe(false);
+    await expect(updateProject(blue, novaData.projectId, { name: "Hijacked" })).rejects.toThrow(NotFoundError);
+    await expect(archiveProject(blue, novaData.projectId)).rejects.toThrow(NotFoundError);
+    await expect(saveDesign(blue, { id: novaData.designId, projectId: novaData.projectId, name: "x", model: DEFAULT_DECK_DESIGN })).rejects.toThrow(NotFoundError);
+    await expect(saveDesign(blue, { projectId: novaData.projectId, name: "x", model: DEFAULT_DECK_DESIGN })).rejects.toThrow(NotFoundError);
+    await expect(createRevision(blue, { designId: novaData.designId })).rejects.toThrow(NotFoundError);
+    await expect(setEstimateStatus(blue, novaData.estimateId, "accepted")).rejects.toThrow(NotFoundError);
+    const p = await getProject(nova, novaData.projectId);
+    expect(p.name).toBe("NOVA only project");
+    expect(p.status).toBe("active");
+    expect(p.events).toHaveLength(3);
   });
 
   it("exports from another company are rejected", async () => {
     await expect(exportRevisionCsv(blue, novaData.revisionId)).rejects.toThrow(NotFoundError);
-    expect((await exportRevisionCsv(nova, novaData.revisionId)).csv).toContain("Subtotal,1440.00");
+    expect((await exportRevisionCsv(nova, novaData.revisionId)).csv).toContain("Spiced Rum");
   });
 
   it("cannot link records across companies even with a valid foreign ID", async () => {
-    const blueCustomer = await crm.createCustomer(blue, { displayName: "Blue Customer" });
-    // Blue's customer id passed into NOVA's context → not found (customer is scoped).
-    await expect(crm.createOpportunity(nova, { customerId: blueCustomer.id, title: "x", serviceType: "deck", leadSource: "other" })).rejects.toThrow(NotFoundError);
-    // NOVA stage id passed into Blue's context → rejected.
-    const novaStage = await stageId(db, nova.companyId, "Won");
-    await expect(crm.createOpportunity(blue, { customerId: blueCustomer.id, title: "x", serviceType: "deck", leadSource: "other", stageId: novaStage })).rejects.toThrow(/Unknown stage/);
-    // Even a raw insert that bypasses the service is blocked by the composite foreign key.
-    await expect(
-      getPool().query(
-        `insert into opportunities (company_id, customer_id, title, service_type, lead_source, stage_id)
-         values ($1, $2, 'raw', 'deck', 'other', (select id from pipeline_stages where company_id = $1 limit 1))`,
-        [blue.companyId, novaData.customerId],
-      ),
-    ).rejects.toThrow(/opps_customer_fk/);
+    const blueProject = await createProject(blue, { name: "Blue project" });
+    await expect(saveDesign(nova, { projectId: blueProject.id, name: "x", model: DEFAULT_DECK_DESIGN })).rejects.toThrow(NotFoundError);
+    // A raw insert that bypasses the service is blocked by the composite foreign key.
+    await expect(getPool().query(`insert into deck_designs (company_id, project_id, name, model) values ($1, $2, 'raw', '{}'::jsonb)`, [blue.companyId, novaData.projectId])).rejects.toThrow(/designs_project_fk/);
   });
 
-  it("company pricing is independent: same catalog product, different price per company", async () => {
-    const pid = await productId(db, "NL-HBR-GRY-20");
-    expect((await getPricedProduct(nova, pid)).unitPriceCents).toBe(6000);
-    expect((await getPricedProduct(blue, pid)).unitPriceCents).toBe(6400);
-    await expect(getPricedProduct(blue, await productId(db, "RW-CT-16"))).rejects.toThrow(NotFoundError);
+  it("company pricing and price books are independent", async () => {
+    const pid = await productId(db, "SR010616TG01");
+    expect((await getPricedProduct(nova, pid)).unitPriceCents).toBe(7900);
+    expect((await getPricedProduct(blue, pid)).unitPriceCents).toBe(8300);
+    expect((await getPricedProduct(blue, await productId(db, "LCGV5420P"))).unitPriceCents).toBeNull();
+    expect((await getPriceBook(blue)).get("labor.deck-sqft")!.unitPriceCents).toBe(Math.round(2400 * 1.08));
+    expect((await getPriceBook(nova)).get("labor.deck-sqft")!.unitPriceCents).toBe(2400);
   });
 
   it("a user with memberships in two companies sees each company's data only in that context", async () => {
     await db.execute(sql`insert into memberships (company_id, user_id, role) values (${blue.companyId}, ${nova.userId}, 'member')`);
     const asBlue = await buildCompanyContext(nova.userId, "blue-ridge", db);
     expect(asBlue.role).toBe("member");
-    expect((await crm.listCustomers(asBlue)).map((c) => c.customer.displayName)).toEqual(["Blue Customer"]);
-    await expect(crm.getOpportunity(asBlue, novaData.oppId)).rejects.toThrow(NotFoundError);
+    expect((await listProjects(asBlue)).map((r) => r.project.name)).toEqual(["Blue project"]);
+    await expect(getProject(asBlue, novaData.projectId)).rejects.toThrow(NotFoundError);
+    await expect(upsertIntegration(asBlue, { provider: "acculynx", enabled: true, credentialRef: "X_KEY", settings: {} })).rejects.toThrow(ForbiddenError);
     expect((await listUserCompanies(nova.userId, db)).map((c) => c.slug).sort()).toEqual(["blue-ridge", "nova"]);
   });
 });

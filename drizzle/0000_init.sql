@@ -14,19 +14,6 @@ CREATE TABLE "account" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "activities" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"customer_id" uuid NOT NULL,
-	"opportunity_id" uuid,
-	"job_id" uuid,
-	"actor_user_id" text,
-	"kind" text NOT NULL,
-	"body" text NOT NULL,
-	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "catalog_products" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"category" text NOT NULL,
@@ -34,10 +21,20 @@ CREATE TABLE "catalog_products" (
 	"product_line" text NOT NULL,
 	"name" text NOT NULL,
 	"sku" text NOT NULL,
+	"color" text,
+	"color_hex" text,
+	"profile" text DEFAULT 'square-edge' NOT NULL,
+	"material" text DEFAULT 'fictional' NOT NULL,
+	"thickness_in" real,
+	"width_actual_in" real,
 	"stock_length_in" integer NOT NULL,
-	"effective_width_in" integer NOT NULL,
+	"effective_width_in" real NOT NULL,
+	"installation" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"attributes" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"data_source" text NOT NULL,
+	"data_effective_on" date,
+	"verified" boolean DEFAULT false NOT NULL,
+	"active" boolean DEFAULT true NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "catalog_mfr_sku_uq" UNIQUE("manufacturer","sku"),
 	CONSTRAINT "catalog_positive_dims" CHECK ("catalog_products"."stock_length_in" > 0 and "catalog_products"."effective_width_in" > 0)
@@ -48,7 +45,8 @@ CREATE TABLE "companies" (
 	"slug" text NOT NULL,
 	"name" text NOT NULL,
 	"timezone" text DEFAULT 'America/New_York' NOT NULL,
-	"next_job_number" integer DEFAULT 1001 NOT NULL,
+	"settings" jsonb DEFAULT '{"wastePct":10,"markupPct":25,"materialTaxPct":0,"framingRuleset":"fairfax-county-va-2021.0"}'::jsonb NOT NULL,
+	"next_project_number" integer DEFAULT 1001 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "companies_slug_unique" UNIQUE("slug"),
@@ -69,51 +67,10 @@ CREATE TABLE "company_product_prices" (
 	CONSTRAINT "prices_nonneg" CHECK ("company_product_prices"."unit_price_cents" >= 0)
 );
 --> statement-breakpoint
-CREATE TABLE "customer_addresses" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"customer_id" uuid NOT NULL,
-	"label" text DEFAULT 'Project site' NOT NULL,
-	"line1" text NOT NULL,
-	"line2" text,
-	"city" text NOT NULL,
-	"region" text NOT NULL,
-	"postal_code" text NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "addresses_company_customer_id_uq" UNIQUE("company_id","customer_id","id")
-);
---> statement-breakpoint
-CREATE TABLE "customer_contacts" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"customer_id" uuid NOT NULL,
-	"name" text NOT NULL,
-	"role" text,
-	"email" text,
-	"phone" text,
-	"is_primary" boolean DEFAULT false NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "customers" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"display_name" text NOT NULL,
-	"kind" text DEFAULT 'residential' NOT NULL,
-	"notes" text,
-	"created_by" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "customers_company_id_uq" UNIQUE("company_id","id")
-);
---> statement-breakpoint
 CREATE TABLE "deck_designs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
-	"opportunity_id" uuid NOT NULL,
-	"job_id" uuid,
+	"project_id" uuid NOT NULL,
 	"name" text NOT NULL,
 	"model" jsonb NOT NULL,
 	"version" integer DEFAULT 1 NOT NULL,
@@ -129,13 +86,19 @@ CREATE TABLE "estimate_revisions" (
 	"company_id" uuid NOT NULL,
 	"estimate_id" uuid NOT NULL,
 	"revision_number" integer NOT NULL,
-	"status" text DEFAULT 'draft' NOT NULL,
 	"scope_label" text NOT NULL,
 	"design_version" integer NOT NULL,
 	"design_snapshot" jsonb NOT NULL,
+	"framing_snapshot" jsonb NOT NULL,
 	"product_snapshot" jsonb NOT NULL,
-	"line_items" jsonb NOT NULL,
-	"subtotal_cents" integer NOT NULL,
+	"settings" jsonb NOT NULL,
+	"sections" jsonb NOT NULL,
+	"warnings" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"materials_cents" integer NOT NULL,
+	"labor_cents" integer NOT NULL,
+	"markup_cents" integer NOT NULL,
+	"tax_cents" integer NOT NULL,
+	"total_cents" integer NOT NULL,
 	"created_by" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "revisions_estimate_number_uq" UNIQUE("estimate_id","revision_number")
@@ -144,30 +107,27 @@ CREATE TABLE "estimate_revisions" (
 CREATE TABLE "estimates" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
-	"opportunity_id" uuid NOT NULL,
-	"job_id" uuid,
+	"project_id" uuid NOT NULL,
 	"design_id" uuid,
 	"title" text NOT NULL,
-	"created_by" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "estimates_company_id_uq" UNIQUE("company_id","id")
-);
---> statement-breakpoint
-CREATE TABLE "jobs" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"opportunity_id" uuid NOT NULL,
-	"customer_id" uuid NOT NULL,
-	"address_id" uuid,
-	"job_number" text NOT NULL,
-	"title" text NOT NULL,
-	"service_type" text NOT NULL,
-	"status" text DEFAULT 'active' NOT NULL,
+	"status" text DEFAULT 'draft' NOT NULL,
 	"created_by" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "jobs_company_id_uq" UNIQUE("company_id","id"),
-	CONSTRAINT "jobs_company_number_uq" UNIQUE("company_id","job_number")
+	CONSTRAINT "estimates_company_id_uq" UNIQUE("company_id","id")
+);
+--> statement-breakpoint
+CREATE TABLE "integrations" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"company_id" uuid NOT NULL,
+	"provider" text NOT NULL,
+	"enabled" boolean DEFAULT false NOT NULL,
+	"settings" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"credential_ref" text,
+	"last_sync_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "integrations_company_provider_uq" UNIQUE("company_id","provider")
 );
 --> statement-breakpoint
 CREATE TABLE "memberships" (
@@ -180,32 +140,55 @@ CREATE TABLE "memberships" (
 	CONSTRAINT "memberships_role_ck" CHECK ("memberships"."role" in ('owner_admin','member'))
 );
 --> statement-breakpoint
-CREATE TABLE "opportunities" (
+CREATE TABLE "price_book_items" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,
-	"customer_id" uuid NOT NULL,
-	"address_id" uuid,
-	"title" text NOT NULL,
-	"service_type" text NOT NULL,
-	"lead_source" text NOT NULL,
-	"stage_id" uuid NOT NULL,
-	"assignee_user_id" text,
-	"next_follow_up_on" date,
-	"lost_reason" text,
+	"key" text NOT NULL,
+	"category" text NOT NULL,
+	"description" text NOT NULL,
+	"unit" text NOT NULL,
+	"unit_price_cents" integer NOT NULL,
+	"source" text NOT NULL,
+	"effective_on" date NOT NULL,
+	"created_by" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "price_book_company_key_date_uq" UNIQUE("company_id","key","effective_on"),
+	CONSTRAINT "price_book_nonneg" CHECK ("price_book_items"."unit_price_cents" >= 0)
+);
+--> statement-breakpoint
+CREATE TABLE "project_events" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"company_id" uuid NOT NULL,
+	"project_id" uuid NOT NULL,
+	"actor_user_id" text,
+	"kind" text NOT NULL,
+	"body" text NOT NULL,
+	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "projects" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"company_id" uuid NOT NULL,
+	"project_number" text NOT NULL,
+	"name" text NOT NULL,
+	"status" text DEFAULT 'active' NOT NULL,
+	"client_name" text,
+	"client_phone" text,
+	"client_email" text,
+	"site_line1" text,
+	"site_line2" text,
+	"site_city" text,
+	"site_region" text,
+	"site_postal_code" text,
+	"jurisdiction" text DEFAULT 'Fairfax County, VA' NOT NULL,
+	"external_crm" jsonb,
+	"notes" text,
 	"created_by" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "opps_company_id_uq" UNIQUE("company_id","id")
-);
---> statement-breakpoint
-CREATE TABLE "pipeline_stages" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"name" text NOT NULL,
-	"position" integer NOT NULL,
-	"kind" text DEFAULT 'open' NOT NULL,
-	CONSTRAINT "stages_company_id_uq" UNIQUE("company_id","id"),
-	CONSTRAINT "stages_company_name_uq" UNIQUE("company_id","name")
+	CONSTRAINT "projects_company_id_uq" UNIQUE("company_id","id"),
+	CONSTRAINT "projects_company_number_uq" UNIQUE("company_id","project_number")
 );
 --> statement-breakpoint
 CREATE TABLE "session" (
@@ -226,21 +209,6 @@ CREATE TABLE "suppliers" (
 	"name" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "suppliers_company_id_uq" UNIQUE("company_id","id")
-);
---> statement-breakpoint
-CREATE TABLE "tasks" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"company_id" uuid NOT NULL,
-	"opportunity_id" uuid,
-	"job_id" uuid,
-	"title" text NOT NULL,
-	"owner_user_id" text NOT NULL,
-	"due_on" date NOT NULL,
-	"completed_at" timestamp with time zone,
-	"completed_by" text,
-	"created_by" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "user" (
@@ -264,56 +232,36 @@ CREATE TABLE "verification" (
 );
 --> statement-breakpoint
 ALTER TABLE "account" ADD CONSTRAINT "account_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "activities" ADD CONSTRAINT "activities_actor_user_id_user_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "activities" ADD CONSTRAINT "activities_customer_fk" FOREIGN KEY ("company_id","customer_id") REFERENCES "public"."customers"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "activities" ADD CONSTRAINT "activities_opportunity_fk" FOREIGN KEY ("company_id","opportunity_id") REFERENCES "public"."opportunities"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "activities" ADD CONSTRAINT "activities_job_fk" FOREIGN KEY ("company_id","job_id") REFERENCES "public"."jobs"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_product_prices" ADD CONSTRAINT "company_product_prices_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_product_prices" ADD CONSTRAINT "company_product_prices_catalog_product_id_catalog_products_id_fk" FOREIGN KEY ("catalog_product_id") REFERENCES "public"."catalog_products"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_product_prices" ADD CONSTRAINT "company_product_prices_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_product_prices" ADD CONSTRAINT "prices_supplier_fk" FOREIGN KEY ("company_id","supplier_id") REFERENCES "public"."suppliers"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customer_addresses" ADD CONSTRAINT "addresses_customer_fk" FOREIGN KEY ("company_id","customer_id") REFERENCES "public"."customers"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customer_contacts" ADD CONSTRAINT "contacts_customer_fk" FOREIGN KEY ("company_id","customer_id") REFERENCES "public"."customers"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customers" ADD CONSTRAINT "customers_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "customers" ADD CONSTRAINT "customers_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "deck_designs" ADD CONSTRAINT "deck_designs_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "deck_designs" ADD CONSTRAINT "deck_designs_updated_by_user_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "deck_designs" ADD CONSTRAINT "designs_opportunity_fk" FOREIGN KEY ("company_id","opportunity_id") REFERENCES "public"."opportunities"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "deck_designs" ADD CONSTRAINT "designs_job_fk" FOREIGN KEY ("company_id","job_id") REFERENCES "public"."jobs"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "deck_designs" ADD CONSTRAINT "designs_project_fk" FOREIGN KEY ("company_id","project_id") REFERENCES "public"."projects"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "estimate_revisions" ADD CONSTRAINT "estimate_revisions_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "estimate_revisions" ADD CONSTRAINT "revisions_estimate_fk" FOREIGN KEY ("company_id","estimate_id") REFERENCES "public"."estimates"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "estimates" ADD CONSTRAINT "estimates_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "estimates" ADD CONSTRAINT "estimates_opportunity_fk" FOREIGN KEY ("company_id","opportunity_id") REFERENCES "public"."opportunities"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "estimates" ADD CONSTRAINT "estimates_job_fk" FOREIGN KEY ("company_id","job_id") REFERENCES "public"."jobs"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "estimates" ADD CONSTRAINT "estimates_project_fk" FOREIGN KEY ("company_id","project_id") REFERENCES "public"."projects"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "estimates" ADD CONSTRAINT "estimates_design_fk" FOREIGN KEY ("company_id","design_id") REFERENCES "public"."deck_designs"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "jobs" ADD CONSTRAINT "jobs_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "jobs" ADD CONSTRAINT "jobs_opportunity_fk" FOREIGN KEY ("company_id","opportunity_id") REFERENCES "public"."opportunities"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "jobs" ADD CONSTRAINT "jobs_customer_fk" FOREIGN KEY ("company_id","customer_id") REFERENCES "public"."customers"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "jobs" ADD CONSTRAINT "jobs_address_fk" FOREIGN KEY ("company_id","customer_id","address_id") REFERENCES "public"."customer_addresses"("company_id","customer_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "integrations" ADD CONSTRAINT "integrations_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "memberships" ADD CONSTRAINT "memberships_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "memberships" ADD CONSTRAINT "memberships_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "opportunities" ADD CONSTRAINT "opportunities_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "opportunities" ADD CONSTRAINT "opps_customer_fk" FOREIGN KEY ("company_id","customer_id") REFERENCES "public"."customers"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "opportunities" ADD CONSTRAINT "opps_address_fk" FOREIGN KEY ("company_id","customer_id","address_id") REFERENCES "public"."customer_addresses"("company_id","customer_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "opportunities" ADD CONSTRAINT "opps_stage_fk" FOREIGN KEY ("company_id","stage_id") REFERENCES "public"."pipeline_stages"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "opportunities" ADD CONSTRAINT "opps_assignee_member_fk" FOREIGN KEY ("company_id","assignee_user_id") REFERENCES "public"."memberships"("company_id","user_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "pipeline_stages" ADD CONSTRAINT "pipeline_stages_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "price_book_items" ADD CONSTRAINT "price_book_items_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "price_book_items" ADD CONSTRAINT "price_book_items_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "project_events" ADD CONSTRAINT "project_events_actor_user_id_user_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "project_events" ADD CONSTRAINT "project_events_project_fk" FOREIGN KEY ("company_id","project_id") REFERENCES "public"."projects"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "projects" ADD CONSTRAINT "projects_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "projects" ADD CONSTRAINT "projects_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "suppliers" ADD CONSTRAINT "suppliers_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tasks" ADD CONSTRAINT "tasks_completed_by_user_id_fk" FOREIGN KEY ("completed_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tasks" ADD CONSTRAINT "tasks_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tasks" ADD CONSTRAINT "tasks_opportunity_fk" FOREIGN KEY ("company_id","opportunity_id") REFERENCES "public"."opportunities"("company_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tasks" ADD CONSTRAINT "tasks_job_fk" FOREIGN KEY ("company_id","job_id") REFERENCES "public"."jobs"("company_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tasks" ADD CONSTRAINT "tasks_owner_member_fk" FOREIGN KEY ("company_id","owner_user_id") REFERENCES "public"."memberships"("company_id","user_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "account_user_idx" ON "account" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "activities_opp_idx" ON "activities" USING btree ("company_id","opportunity_id","created_at");--> statement-breakpoint
-CREATE INDEX "activities_customer_idx" ON "activities" USING btree ("company_id","customer_id","created_at");--> statement-breakpoint
+CREATE INDEX "catalog_browse_idx" ON "catalog_products" USING btree ("category","manufacturer","product_line","color");--> statement-breakpoint
 CREATE INDEX "prices_lookup_idx" ON "company_product_prices" USING btree ("company_id","catalog_product_id","effective_on");--> statement-breakpoint
-CREATE INDEX "contacts_customer_idx" ON "customer_contacts" USING btree ("company_id","customer_id");--> statement-breakpoint
-CREATE INDEX "customers_company_name_idx" ON "customers" USING btree ("company_id","display_name");--> statement-breakpoint
-CREATE UNIQUE INDEX "jobs_opportunity_uq" ON "jobs" USING btree ("opportunity_id");--> statement-breakpoint
+CREATE INDEX "designs_project_idx" ON "deck_designs" USING btree ("company_id","project_id");--> statement-breakpoint
+CREATE INDEX "estimates_project_idx" ON "estimates" USING btree ("company_id","project_id");--> statement-breakpoint
 CREATE INDEX "memberships_user_idx" ON "memberships" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "opps_company_stage_idx" ON "opportunities" USING btree ("company_id","stage_id");--> statement-breakpoint
-CREATE INDEX "opps_company_followup_idx" ON "opportunities" USING btree ("company_id","next_follow_up_on");--> statement-breakpoint
-CREATE INDEX "session_user_idx" ON "session" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "tasks_company_owner_due_idx" ON "tasks" USING btree ("company_id","owner_user_id","due_on");
+CREATE INDEX "price_book_lookup_idx" ON "price_book_items" USING btree ("company_id","key","effective_on");--> statement-breakpoint
+CREATE INDEX "project_events_project_idx" ON "project_events" USING btree ("company_id","project_id","created_at");--> statement-breakpoint
+CREATE INDEX "projects_company_name_idx" ON "projects" USING btree ("company_id","name");--> statement-breakpoint
+CREATE INDEX "session_user_idx" ON "session" USING btree ("user_id");

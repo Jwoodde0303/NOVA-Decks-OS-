@@ -185,6 +185,21 @@ export function FramingPanel({ model, framing, onChange }: { model: DeckDesignMo
             <Detail title="Lateral support" body={framing.posts.lateral.description} cite="Table 8, Figures 28–33" />
             <Detail title="Guards" body={framing.guards.required ? `Required (deck > 30" above grade): 36" min. height, 4x4 posts at ≤ 6' o.c. (${framing.guards.posts.length} posts) with (2) ½" through-bolts and 1,800 lb hold-downs, blocking at posts, 2x2 balusters, 4" sphere rule.` : 'Not required (deck ≤ 30" above grade).'} cite="Figures 34–38" />
             <Detail title="Stair" body={`${fmtFtIn(framing.stair.widthIn)} wide, ${framing.stair.risers} risers @ ${framing.stair.riserHeightIn.toFixed(2)}" (max 8¼"), ${framing.stair.treads} treads @ ${framing.stair.treadRunIn}" run (min 9"), horizontal span ${fmtFtIn(framing.stair.horizontalSpanIn)} (max ${fmtFtIn(framing.stair.maxStringerSpanIn)} for ${framing.stair.stringerType} stringers). ${framing.stair.stringerCount} × 2x12 stringers ≤ 18" o.c.; ${framing.stair.footing}; ${framing.stair.upperBearing}.${framing.stair.guardRequired ? " Stair guard 34–38\" above nosings." : ""}${framing.stair.handrailRequired ? " Handrail on one side, 34–38\", returned at ends." : ""}`} cite="Figures 39–45" />
+            {framing.manufacturerRules && (
+              <div className="md:col-span-2 rounded-[var(--radius-sm)] border border-slate/20 bg-slate-soft/50 p-3">
+                <div className="font-semibold">
+                  Manufacturer installation rules applied <span className="text-[11px] font-normal text-ink-3">{framing.manufacturerRules.manufacturer} {framing.manufacturerRules.productLine} · {framing.manufacturerRules.rules.source.title}</span>
+                </div>
+                <ul className="mt-1 list-disc pl-5 text-ink-2">
+                  {framing.manufacturerRules.applied.map((a) => (
+                    <li key={a}>{a}</li>
+                  ))}
+                  {framing.manufacturerRules.rules.notes.map((n) => (
+                    <li key={n} className="text-ink-3">{n}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {framing.underJoistBracingRequired && <Detail title="Under-joist bracing" body="Hidden decking fasteners with posts over 2.5 ft: 2x6 bracing under the joists at 45°–60°, continuous, attached to every joist." cite="Figures 2–3" />}
           </div>
 

@@ -3,28 +3,31 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { createRevisionAction, saveDesignAction } from "@/app/c/[slug]/actions";
+import type { InstallationRules } from "@/db/catalog/types";
 import { formatFeetInches } from "@/modules/core/units";
 import { analyzeDeck, type DeckDesignModel, type FramingOptions } from "@/modules/design/model";
 import { generateFraming } from "@/modules/framing/generate";
 import { FramingPanel } from "@/modules/framing/components/FramingPanel";
+import type { PricedProduct } from "@/modules/estimating/takeoff";
 import { FeetInches } from "./FeetInches";
-import { DRAFT_SCOPE_LABEL, type PricedProduct } from "@/modules/estimating/takeoff";
 import { PlanView } from "./PlanView";
+import { ProductPicker, type CatalogPickerItem } from "./ProductPicker";
 
 const Deck3D = dynamic(() => import("./Deck3D").then((m) => m.Deck3D), { ssr: false, loading: () => <div className="flex h-full items-center justify-center text-[13px] text-ink-3">Loading 3D preview…</div> });
 
 interface Props {
   slug: string;
-  opportunityId: string;
+  projectId: string;
   design: { id: string; name: string; version: number } | null;
   initialModel: DeckDesignModel;
-  products: PricedProduct[];
+  catalog: CatalogPickerItem[];
+  lines: { manufacturer: string; productLine: string; installation: InstallationRules | null }[];
+  prices: Record<string, number>;
   estimates: { id: string; title: string; revisions: number }[];
   canEstimate: boolean;
-  canExport: boolean;
 }
 
-export function DeckEditor({ slug, opportunityId, design, initialModel, products, estimates, canEstimate }: Props) {
+export function DeckEditor({ slug, projectId, design, initialModel, catalog, lines, prices, estimates, canEstimate }: Props) {
   const router = useRouter();
   const [model, setModel] = useState<DeckDesignModel>(initialModel);
   const [name, setName] = useState(design?.name ?? "Main deck");
@@ -35,24 +38,46 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string; issues?: string[] } | null>(null);
   const [pending, start] = useTransition();
 
-  const product = useMemo(() => products.find((p) => p.id === model.deckingProductId) ?? null, [products, model.deckingProductId]);
+  const product: PricedProduct | null = useMemo(() => {
+    const item = catalog.find((c) => c.id === model.deckingProductId);
+    if (!item) return null;
+    const line = lines.find((l) => l.manufacturer === item.manufacturer && l.productLine === item.productLine);
+    return {
+      id: item.id,
+      name: item.name,
+      sku: item.sku,
+      manufacturer: item.manufacturer,
+      productLine: item.productLine,
+      color: item.color,
+      colorHex: item.colorHex,
+      profile: item.profile,
+      stockLengthIn: item.stockLengthIn,
+      effectiveWidthIn: item.effectiveWidthIn,
+      widthActualIn: item.widthActualIn,
+      thicknessIn: item.thicknessIn,
+      installation: line?.installation ?? null,
+      unitPriceCents: prices[item.id] ?? null,
+      priceSource: null,
+      priceEffectiveOn: null,
+      supplierName: null,
+    };
+  }, [catalog, lines, prices, model.deckingProductId]);
   const analysis = useMemo(() => analyzeDeck(model, product), [model, product]);
-  const framing = useMemo(() => generateFraming(model), [model]);
-  const totalCents = analysis.decking && product ? analysis.decking.totalPieces * product.unitPriceCents : null;
+  const framing = useMemo(() => generateFraming(model, product), [model, product]);
+  const totalCents = analysis.decking && product?.unitPriceCents != null ? analysis.decking.totalPieces * product.unitPriceCents : null;
 
   function patch(p: Partial<DeckDesignModel>) {
     setModel((m) => ({ ...m, ...p }));
     setDirty(true);
     setMessage(null);
   }
-
   function patchFraming(p: Partial<FramingOptions>) {
     patch({ framing: { ...model.framing, ...p } });
   }
 
   function save() {
     start(async () => {
-      const r = await saveDesignAction(slug, { id: designId, opportunityId, name, model });
+      const r = await saveDesignAction(slug, { id: designId, projectId, name, model });
       if (!r || ("error" in r && r.error)) {
         setMessage({ tone: "err", text: r?.error ?? "Request failed", issues: r?.issues });
         return;
@@ -62,27 +87,27 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
       setVersion(saved.version);
       setDirty(false);
       setMessage({ tone: "ok", text: `Design saved (v${saved.version}).` });
-      if (!designId) router.replace(`/c/${slug}/opportunities/${opportunityId}/design/${saved.id}`);
+      if (!designId) router.replace(`/c/${slug}/projects/${projectId}/design/${saved.id}`);
     });
   }
 
   function saveEstimate() {
     if (!designId || !product) return;
     start(async () => {
-      const r = await createRevisionAction(slug, { designId, catalogProductId: product.id, estimateId: estimateTarget || null });
+      const r = await createRevisionAction(slug, { designId, estimateId: estimateTarget || null });
       if (!r || ("error" in r && r.error)) {
         setMessage({ tone: "err", text: r?.error ?? "Request failed", issues: r?.issues });
         return;
       }
-      const rev = r as { estimateId: string; revisionNumber: number };
+      const rev = r as { estimateId: string };
       router.push(`/c/${slug}/estimates/${rev.estimateId}`);
     });
   }
 
-  const exportBlocked = !analysis.valid;
+  const blocked = !analysis.valid || !framing.ok;
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[340px_1fr]">
+    <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
       <aside className="space-y-4">
         <div className="card p-4">
           <label className="lbl">Design name</label>
@@ -117,22 +142,8 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
 
         <div className="card p-4">
           <h2 className="mb-3 text-[15px] font-semibold">Decking</h2>
-          <label className="lbl">Product</label>
-          <select className="field" value={model.deckingProductId ?? ""} onChange={(e) => patch({ deckingProductId: e.target.value || null })}>
-            <option value="">— choose —</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · ${(p.unitPriceCents / 100).toFixed(2)} · {p.stockLengthIn / 12} ft
-              </option>
-            ))}
-          </select>
-          {product && (
-            <div className="mt-2 text-[12px] text-ink-3">
-              {product.manufacturer} · {product.effectiveWidthIn} in effective width · {product.priceSource}
-              {product.supplierName ? ` · ${product.supplierName}` : ""}
-            </div>
-          )}
-          <div className="mt-2 text-[12px] text-ink-3">Boards run parallel to the house.</div>
+          <ProductPicker items={catalog} prices={prices} value={model.deckingProductId} onChange={(id) => patch({ deckingProductId: id })} />
+          <div className="mt-2 text-[12px] text-ink-3">Boards run parallel to the house. The manufacturer&apos;s installation rules are applied to the framing below.</div>
         </div>
 
         {analysis.issues.length > 0 && (
@@ -165,7 +176,7 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
           </button>
           {canEstimate && (
             <div className="card p-3">
-              <div className="mb-2 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-3">Draft estimate</div>
+              <div className="mb-2 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-3">Estimate</div>
               {estimates.length > 0 && (
                 <select className="field mb-2" value={estimateTarget} onChange={(e) => setEstimateTarget(e.target.value)}>
                   <option value="">New estimate</option>
@@ -176,10 +187,10 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
                   ))}
                 </select>
               )}
-              <button className="btn btn-secondary w-full" onClick={saveEstimate} disabled={pending || !designId || dirty || !product || exportBlocked} title={!designId || dirty ? "Save the design first" : exportBlocked ? "Fix validation errors first" : undefined}>
-                Save draft estimate revision
+              <button className="btn btn-secondary w-full" onClick={saveEstimate} disabled={pending || !designId || dirty || !product || blocked} title={!designId || dirty ? "Save the design first" : blocked ? "Fix the blocking issues first" : undefined}>
+                Save estimate revision
               </button>
-              <div className="mt-1.5 text-[11px] text-ink-3">{!designId || dirty ? "Save the design first." : exportBlocked ? "Blocked by validation errors." : "Snapshots this design and today's price."}</div>
+              <div className="mt-1.5 text-[11px] text-ink-3">{!designId || dirty ? "Save the design first." : blocked ? "Blocked by design or framing issues." : "Prices decking, framing, hardware, footings, stairs, guards and labor from today's price book and snapshots it."}</div>
             </div>
           )}
         </div>
@@ -199,40 +210,36 @@ export function DeckEditor({ slug, opportunityId, design, initialModel, products
           <section className="card overflow-hidden">
             <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
               <h2 className="text-[14px] font-semibold">3D preview</h2>
-              <span className="text-[12px] text-ink-3">Drag to rotate · scroll to zoom</span>
+              <span className="text-[12px] text-ink-3">{product?.color ? `${product.manufacturer} ${product.color} · ` : ""}drag to rotate · scroll to zoom</span>
             </div>
             <div className="h-[360px] bg-[#e9eef2]">
-              <Deck3D model={model} analysis={analysis} framing={framing} />
+              <Deck3D model={model} analysis={analysis} framing={framing} boardColor={product?.colorHex ?? undefined} />
             </div>
           </section>
         </div>
 
         <section className="card">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
-            <h2 className="text-[14px] font-semibold">Takeoff</h2>
-            <span className="chip border-amber/25 bg-amber-soft text-amber">{DRAFT_SCOPE_LABEL}</span>
+            <h2 className="text-[14px] font-semibold">Decking takeoff</h2>
+            <span className="text-[12px] text-ink-3">Board count before waste · the estimate adds waste, framing, hardware, footings, stairs, guards and labor</span>
           </div>
           <div className="grid gap-4 p-4 md:grid-cols-[1fr_1fr]">
             <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 text-[14px]">
-              <Row k="Deck footprint" v={`${formatFeetInches(model.widthIn)} × ${formatFeetInches(model.depthIn)}`} />
+              <Row k="Deck footprint" v={`${formatFeetInches(model.widthIn)} × ${formatFeetInches(model.depthIn)} · ${((model.widthIn * model.depthIn) / 144).toFixed(0)} sq ft`} />
               <Row k="Outer edge left of stair" v={formatFeetInches(analysis.outerEdge.leftSegmentIn)} />
               <Row k="Stair opening" v={formatFeetInches(analysis.outerEdge.stairOpeningIn)} />
               <Row k="Outer edge right of stair" v={formatFeetInches(analysis.outerEdge.rightSegmentIn)} />
               <Row k="Open perimeter" v={formatFeetInches(analysis.openPerimeterIn)} strong />
               <dd className="col-span-2 -mt-1 text-[12px] text-ink-3">Both sides plus outer edge, excluding the house edge and stair opening.</dd>
-              <dt className="text-ink-2">Stair (schematic)</dt>
-              <dd className="num text-right">{analysis.stairSchematic.risers} risers · {analysis.stairSchematic.treads} treads</dd>
-              <dd className="col-span-2 -mt-1 text-[12px] text-ink-3">{formatFeetInches(analysis.stairSchematic.totalRunIn)} total run at 11 in per tread · structural sizing comes in a later milestone.</dd>
             </dl>
             <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 text-[14px]">
               {analysis.decking && product ? (
                 <>
-                  <Row k="Rows" v={`${analysis.decking.rows} @ ${analysis.decking.effectiveWidthIn} in`} />
+                  <Row k="Rows" v={`${analysis.decking.rows} @ ${analysis.decking.effectiveWidthIn}"`} />
                   <Row k="Pieces per row" v={`${analysis.decking.piecesPerRow} × ${analysis.decking.stockLengthIn / 12} ft`} />
-                  <Row k="Boards" v={`${analysis.decking.totalPieces}`} strong />
-                  <Row k="Unit price" v={`$${(product.unitPriceCents / 100).toFixed(2)}`} />
-                  <Row k="Decking subtotal" v={`$${((totalCents ?? 0) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`} strong />
-                  <dd className="col-span-2 text-[12px] text-ink-3">Excludes waste, cut reuse, fasteners, framing, railing and add-ons.</dd>
+                  <Row k="Boards (no waste)" v={`${analysis.decking.totalPieces}`} strong />
+                  <Row k="Unit price" v={product.unitPriceCents != null ? `$${(product.unitPriceCents / 100).toFixed(2)}` : "no price"} />
+                  <Row k="Decking boards" v={totalCents != null ? `$${(totalCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "—"} strong />
                 </>
               ) : (
                 <dd className="col-span-2 text-ink-3">Choose a decking product to see board counts and price.</dd>
@@ -257,4 +264,3 @@ function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
     </>
   );
 }
-

@@ -1,11 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
-import { activities, deckDesigns, opportunities } from "@/db/schema";
+import { deckDesigns, projects } from "@/db/schema";
 import type { CompanyContext } from "@/modules/core/context";
 import { NotFoundError, ValidationError } from "@/modules/core/errors";
+import { logProjectEvent } from "@/modules/projects/service";
 import { deckDesignModelSchema, type DeckDesignModel } from "./model";
 
 export async function getDesign(ctx: CompanyContext, id: string) {
-  ctx.require("crm.read");
+  ctx.require("projects.read");
   const [d] = await ctx.db
     .select()
     .from(deckDesigns)
@@ -15,72 +16,50 @@ export async function getDesign(ctx: CompanyContext, id: string) {
   return { ...d, model: deckDesignModelSchema.parse(d.model) };
 }
 
-export async function listDesigns(ctx: CompanyContext, opportunityId: string) {
-  ctx.require("crm.read");
+export async function listDesigns(ctx: CompanyContext, projectId: string) {
+  ctx.require("projects.read");
   return ctx.db
     .select()
     .from(deckDesigns)
-    .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.opportunityId, opportunityId)))
+    .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.projectId, projectId)))
     .orderBy(desc(deckDesigns.updatedAt));
 }
 
 /** Create or update a design. Saving bumps `version`; estimate revisions record which version they priced. */
-export async function saveDesign(
-  ctx: CompanyContext,
-  input: { id?: string | null; opportunityId: string; name: string; model: unknown },
-) {
+export async function saveDesign(ctx: CompanyContext, input: { id?: string | null; projectId: string; name: string; model: unknown }) {
   ctx.require("design.write");
   const parsed = deckDesignModelSchema.safeParse(input.model);
   if (!parsed.success) throw new ValidationError("Invalid design model", parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
   const model: DeckDesignModel = parsed.data;
   const name = input.name.trim() || "Deck design";
 
-  const [opp] = await ctx.db
-    .select({ id: opportunities.id, customerId: opportunities.customerId })
-    .from(opportunities)
-    .where(and(eq(opportunities.companyId, ctx.companyId), eq(opportunities.id, input.opportunityId)))
+  const [project] = await ctx.db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(and(eq(projects.companyId, ctx.companyId), eq(projects.id, input.projectId)))
     .limit(1);
-  if (!opp) throw new NotFoundError("Opportunity");
+  if (!project) throw new NotFoundError("Project");
 
   return ctx.db.transaction(async (tx) => {
     let row: typeof deckDesigns.$inferSelect | undefined;
     if (input.id) {
+      const [cur] = await tx
+        .select({ version: deckDesigns.version })
+        .from(deckDesigns)
+        .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.id, input.id), eq(deckDesigns.projectId, project.id)));
+      if (!cur) throw new NotFoundError("Design");
       [row] = await tx
         .update(deckDesigns)
-        .set({ name, model, version: (await currentVersion(ctx, input.id)) + 1, updatedBy: ctx.userId, updatedAt: new Date() })
-        .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.id, input.id), eq(deckDesigns.opportunityId, opp.id)))
+        .set({ name, model, version: cur.version + 1, updatedBy: ctx.userId, updatedAt: new Date() })
+        .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.id, input.id)))
         .returning();
-      if (!row) throw new NotFoundError("Design");
     } else {
-      const [jobRow] = await tx
-        .select({ jobId: deckDesigns.jobId })
-        .from(deckDesigns)
-        .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.opportunityId, opp.id)))
-        .limit(1);
       [row] = await tx
         .insert(deckDesigns)
-        .values({ companyId: ctx.companyId, opportunityId: opp.id, jobId: jobRow?.jobId ?? null, name, model, createdBy: ctx.userId, updatedBy: ctx.userId })
+        .values({ companyId: ctx.companyId, projectId: project.id, name, model, createdBy: ctx.userId, updatedBy: ctx.userId })
         .returning();
     }
-    await tx.insert(activities).values({
-      companyId: ctx.companyId,
-      customerId: opp.customerId,
-      opportunityId: opp.id,
-      jobId: row!.jobId,
-      actorUserId: ctx.userId,
-      kind: "design_saved",
-      body: `Saved deck design "${row!.name}" (v${row!.version})`,
-      metadata: { designId: row!.id, version: row!.version },
-    });
+    await logProjectEvent(tx, ctx, project.id, "design_saved", `Saved deck design "${row!.name}" (v${row!.version})`, { designId: row!.id, version: row!.version });
     return { ...row!, model };
   });
-}
-
-async function currentVersion(ctx: CompanyContext, id: string) {
-  const [d] = await ctx.db
-    .select({ version: deckDesigns.version })
-    .from(deckDesigns)
-    .where(and(eq(deckDesigns.companyId, ctx.companyId), eq(deckDesigns.id, id)));
-  if (!d) throw new NotFoundError("Design");
-  return d.version;
 }
