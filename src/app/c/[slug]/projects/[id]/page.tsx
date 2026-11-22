@@ -78,8 +78,15 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                     <Link href={`${here}/design/${d.id}`} className="font-medium hover:underline">
                       {d.name}
                     </Link>
-                    <span className="text-[12px] text-ink-3">
-                      v{d.version} · <DateText value={d.updatedAt} />
+                    <span className="flex items-center gap-3 text-[12px] text-ink-3">
+                      <span>
+                        v{d.version} · <DateText value={d.updatedAt} />
+                      </span>
+                      {ctx.can("estimate.export") && (
+                        <a href={`/api/c/${slug}/designs/${d.id}/planset`} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm">
+                          Permit planset (PDF)
+                        </a>
+                      )}
                     </span>
                   </li>
                 ))}

@@ -51,6 +51,15 @@ export default async function EstimatePage({ params }: { params: Promise<{ slug:
             <Link href={`${base}/projects/${e.projectId}/design/${e.designId}`} className="text-slate hover:underline">
               Open design
             </Link>
+            {ctx.can("estimate.export") && (
+              <>
+                {" "}
+                ·{" "}
+                <a href={`/api/c/${slug}/designs/${e.designId}/planset`} target="_blank" rel="noreferrer" className="text-slate hover:underline">
+                  Permit planset (PDF)
+                </a>
+              </>
+            )}
           </>
         )}
       </PageHeader>

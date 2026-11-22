@@ -15,7 +15,9 @@
 | projects | `src/modules/projects` | Projects (CRM job link, site, client), project history |
 | catalog | `src/modules/catalog` + `src/db/catalog` | Manufacturer decking catalog with installation rules; sync |
 | design | `src/modules/design` | Deck design model (pure), validation, plan view, 3D preview, product picker |
-| framing | `src/modules/framing` | Jurisdiction rule sets (Fairfax County 2021.0), framing generator, framing plan drawing |
+| framing | `src/modules/framing` | Jurisdiction rule sets (Fairfax County 2021.0), framing generator, framing panel |
+| drawing | `src/modules/drawing` | Renderer-neutral drawing model; deck plan / framing plan / elevation / section / stair generators; SVG renderer |
+| planset | `src/modules/planset` | Permit planset data assembly and PDF sheets (react-pdf) |
 | estimating | `src/modules/estimating` | Company product prices, price book, estimating engine, revisions, CSV |
 | integrations | `src/modules/integrations` | CRM adapter contract and provider adapters |
 
@@ -30,5 +32,5 @@ One pure design model drives every output (`analyzeDeck`, `generateFraming`, `bu
 1. ✅ Workspaces, roles, isolation; deck design editor (plan, 3D, takeoff, CSV); immutable estimate revisions.
 2. ✅ Framing generator per Fairfax County Typical Deck Details (joists, beam, posts, footings, ledger, lateral, guards, stairs), drawn and reflected in 3D.
 3. ✅ Pivot to CAD + estimating: projects with CRM links, Trex/TimberTech/Deckorators catalog with installation rules honoured by the framing generator, company price book, full estimating engine (decking, framing, hardware, footings, stairs, guards, labor; waste/markup/tax), pricing/catalog/integration pages, adapters (stubs).
-4. ⏭ Permit-ready planset PDF: cover, framing plan, deck plan, elevations/sections, stair section, county worksheet + sketch sheet, notes, schedules; plat placeholder.
+4. ✅ Permit-ready planset PDF (9 sheets): cover/index, site-plan placeholder, deck plan, framing plan, elevation, section, stair section, schedules + county worksheet, notes — from a renderer-neutral drawing model shared with the web framing plan.
 5. Later: live CRM adapters (JobTread, AccuLynx), proposal PDF, manual line items, multi-span/free-standing framing, other jurisdictions, railing/fascia catalogs.

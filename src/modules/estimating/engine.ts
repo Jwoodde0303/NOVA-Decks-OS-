@@ -99,7 +99,7 @@ export function buildEstimate(input: { model: DeckDesignModel; product: PricedPr
     lines: [
       {
         key: "catalog.decking",
-        description: `${product.manufacturer} ${product.productLine} ${product.color ?? ""} — ${product.name}`.replace(/\s+/g, " ").trim(),
+        description: `${product.manufacturer} ${product.name}`,
         sku: product.sku,
         qty: boardsGross,
         unit: "each",

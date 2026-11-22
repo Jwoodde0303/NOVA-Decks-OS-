@@ -174,6 +174,11 @@ export function DeckEditor({ slug, projectId, design, initialModel, catalog, lin
           <button className="btn btn-primary" onClick={save} disabled={pending || !dirty}>
             {pending ? "Working…" : designId ? "Save design changes" : "Save design"}
           </button>
+          {designId && !dirty && !blocked && (
+            <a href={`/api/c/${slug}/designs/${designId}/planset`} target="_blank" rel="noreferrer" className="btn btn-secondary">
+              Permit planset (PDF) · 9 sheets
+            </a>
+          )}
           {canEstimate && (
             <div className="card p-3">
               <div className="mb-2 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-3">Estimate</div>
