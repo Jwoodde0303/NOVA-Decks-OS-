@@ -323,8 +323,8 @@ export function sectionDrawing(i: DrawingInputs, box: Box = DEFAULT_BOX): Drawin
   b.vdim(X(beamX) + pw / 2 * s + 8, Y(beamBottom), Y(0), `POST ${fmtFtIn(f.posts.heightIn)}`);
   // Callouts
   b.leader(X(0.75), Y(joistTop - rowOff / 2), X(-18), Y(topY) - 8, `${f.ledger.size} LEDGER, ${f.ledger.fastenerLabel.toUpperCase()} @ ${f.ledger.spacingIn ?? "?"}" O.C., 2 ROWS STAGGERED, CONT. FLASHING`);
-  b.leader(X(D / 2), Y(joistTop - jd / 2), X(D) + 60, Y(deckTop + GUARD_HEIGHT_IN) + 10, `${f.joists.size} JOISTS @ ${f.joists.spacingIn}" O.C., HANGERS AT LEDGER, ${f.beam.type === "dropped" ? "HURRICANE TIE AT BEAM" : "HANGERS AT FLUSH BEAM"}`);
-  b.leader(X(beamX + bw / 2), Y(beamTop - bd / 2), X(D) + 60, Y(beamBottom) - 2, `(${f.beam.plies})${f.beam.size} BEAM, ${f.posts.size === "4x4" || f.beam.plies === 3 ? "POST CAP" : "NOTCHED 6x6 W/ (2) 1/2\" THRU-BOLTS"}`);
+  b.leader(X(D / 2), Y(joistTop - jd / 2), X(D) + 60, Y(deckTop + GUARD_HEIGHT_IN) + 10, `${f.joists.size} JOISTS @ ${f.joists.spacingIn}" O.C., HANGERS AT LEDGER`);
+  b.leader(X(beamX + bw / 2), Y(beamTop - bd / 2), X(D) + 60, Y(beamBottom) - 2, `(${f.beam.plies})${f.beam.size} BEAM, ${f.posts.size === "4x4" || f.beam.plies === 3 ? "POST CAP" : "NOTCHED 6x6 W/ (2) 1/2\" THRU-BOLTS"}; ${f.beam.type === "dropped" ? "HURRICANE TIE EA. JOIST" : "JOIST HANGERS"}`);
   b.leader(X(beamX + fw / 2), Y(-(frost - ft / 2)), X(D) + 60, Y(-frost) + 2, `TYPE ${f.footings.type ?? "?"} FOOTING ${f.footings.roundIn}" RD / ${f.footings.squareIn}" SQ x ${f.footings.thicknessIn}", 3,000 PSI, 12" STEM, 1" MIN POST BASE`);
   return b.build("SECTION A-A", label, "Through a post, perpendicular to the house");
 }
