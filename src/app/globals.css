@@ -1,0 +1,138 @@
+@import "tailwindcss";
+@import "@fontsource-variable/archivo";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* ---------------------------------------------------------------------------
+   NOVA Decks OS design tokens.
+   Palette: warm paper surfaces, deep "ink" text, cedar accent for primary actions,
+   slate for structure. Numbers and dimensions always render in the mono face.
+--------------------------------------------------------------------------- */
+@theme {
+  --font-display: "Archivo Variable", "Archivo", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-paper: #f6f3ee;
+  --color-paper-2: #efeae2;
+  --color-surface: #fffdf9;
+  --color-line: #d9d2c6;
+  --color-line-strong: #b8ae9d;
+  --color-ink: #1c1f24;
+  --color-ink-2: #4a4f58;
+  --color-ink-3: #7b8089;
+  --color-cedar: #c3521f;
+  --color-cedar-strong: #a2420f;
+  --color-cedar-soft: #f8e3d8;
+  --color-slate: #2f4858;
+  --color-slate-soft: #dde6ec;
+  --color-moss: #3f6b4f;
+  --color-moss-soft: #dfeadf;
+  --color-brick: #a3302e;
+  --color-brick-soft: #f6dcdb;
+  --color-amber: #9a6a0c;
+  --color-amber-soft: #f6e9c6;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-card: 0 1px 2px rgb(28 31 36 / 0.06), 0 1px 0 rgb(28 31 36 / 0.03);
+  --shadow-pop: 0 10px 30px -10px rgb(28 31 36 / 0.25);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+  font-weight: 600;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Base form controls */
+.field {
+  @apply w-full rounded-[var(--radius-sm)] border border-line bg-surface px-3 py-2 text-[15px] text-ink shadow-none outline-none transition;
+}
+.field:focus {
+  @apply border-slate ring-2 ring-slate/20;
+}
+.field:disabled {
+  @apply bg-paper-2 text-ink-3;
+}
+select.field {
+  @apply pr-8;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%234a4f58' stroke-width='1.6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+label.lbl {
+  @apply mb-1 block text-[12px] font-medium uppercase tracking-[0.08em] text-ink-3;
+}
+
+.btn {
+  @apply inline-flex h-9 items-center justify-center gap-2 rounded-[var(--radius-sm)] border px-3.5 text-[14px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn-primary {
+  @apply border-cedar-strong bg-cedar text-white hover:bg-cedar-strong;
+}
+.btn-secondary {
+  @apply border-line-strong bg-surface text-ink hover:bg-paper-2;
+}
+.btn-ghost {
+  @apply border-transparent bg-transparent text-ink-2 hover:bg-paper-2;
+}
+.btn-sm {
+  @apply h-8 px-3 text-[13px];
+}
+
+.card {
+  @apply rounded-[var(--radius-md)] border border-line bg-surface shadow-[var(--shadow-card)];
+}
+
+.chip {
+  @apply inline-flex items-center rounded-full border px-2 py-0.5 text-[12px] font-medium leading-5;
+}
+
+.tbl {
+  @apply w-full border-collapse text-[14px];
+}
+.tbl th {
+  @apply border-b border-line px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-3;
+}
+.tbl td {
+  @apply border-b border-line/70 px-3 py-2.5 align-top;
+}
+.tbl tr:last-child td {
+  @apply border-b-0;
+}
+.tbl tbody tr:hover {
+  @apply bg-paper/60;
+}
+
+.plan-dim {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--color-ink-2);
+}
